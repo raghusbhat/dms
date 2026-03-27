@@ -1,9 +1,8 @@
 # --------------------------------------------------------------------
 # DMS — Local Development Infrastructure
 #
-# Starts: Redis, MinIO, Meilisearch
+# Starts: PostgreSQL (pgvector), Redis, MinIO, Meilisearch, Mailhog
 # Does NOT start the backend or frontend — run those separately.
-# PostgreSQL: uses local_postgres (port 5432) — already running outside Docker.
 #
 # Usage:
 #   docker compose up -d          (start all)
@@ -13,8 +12,29 @@
 
 services:
   # ------------------------------------------------------------------
+  # PostgreSQL — main database (pgvector enabled for Phase 7)
+  # Port 5433 to avoid conflict with local_postgres (SmartEye) on 5432
+  # ------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: dms_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dms
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------------------------------
   # Redis — background job queue (Celery broker + backend)
-  # Also used for WebSocket pub/sub notifications
   # ------------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -32,8 +52,9 @@ services:
 
   # ------------------------------------------------------------------
   # MinIO — S3-compatible local file storage
-  # Console: http://localhost:9001  (user: minioadmin / minioadmin)
-  # API:     http://localhost:9000
+  # Console: http://localhost:9003  (user: minioadmin / minioadmin)
+  # API:     http://localhost:9002
+  # (Ports 9000/9001 are taken by SmartEye MinIO)
   # ------------------------------------------------------------------
   minio:
     image: minio/minio:latest
@@ -44,8 +65,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -55,7 +76,7 @@ services:
       retries: 3
 
   # ------------------------------------------------------------------
-  # Meilisearch — full-text search (Phase 10)
+  # Meilisearch — full-text search
   # Dashboard: http://localhost:7700
   # ------------------------------------------------------------------
   meilisearch:
@@ -84,6 +105,7 @@ services:
       - "8025:8025"
 
 volumes:
+  postgres_data:
   redis_data:
   minio_data:
   meilisearch_data:

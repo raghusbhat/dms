@@ -35,8 +35,7 @@ You need these installed before starting:
 | LibreOffice | latest | https://www.libreoffice.org/download/ |
 | Git | any | https://git-scm.com/ |
 
-> **Redis, MinIO, Meilisearch** — started automatically via Docker.
-> **PostgreSQL** — must be running separately (local install or another Docker container). The `dms` database must exist.
+> **PostgreSQL, Redis, MinIO, Meilisearch** — all started automatically via Docker.
 
 ---
 
@@ -50,15 +49,11 @@ docker compose up -d
 ```
 
 This starts:
+- PostgreSQL on port **5433** (pgvector enabled) — port 5432 is reserved for other projects
 - Redis on port 6379
-- MinIO on port 9000 (web console: http://localhost:9001, user: minioadmin / minioadmin)
+- MinIO on port 9002 (web console: http://localhost:9003, user: minioadmin / minioadmin)
 - Meilisearch on port 7700 (http://localhost:7700)
 - Mailhog on port 8025 — catches all outgoing email (http://localhost:8025)
-
-> **PostgreSQL is NOT in Docker.** Use a local PostgreSQL installation (port 5432). Create the database manually:
-> ```bash
-> psql -U postgres -c "CREATE DATABASE dms;"
-> ```
 
 Check everything is running:
 ```bash
@@ -126,7 +121,7 @@ All config goes in `backend/.env`. Copy from `backend/.env.example`.
 
 | Variable | Example | What it does |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/dms` | Database connection |
+| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5433/dms` | Database connection |
 | `SECRET_KEY` | `openssl rand -hex 32` | JWT signing key |
 
 **For AI features (Phase 3):**
@@ -225,8 +220,8 @@ docker compose down -v
 docker compose logs redis
 docker compose logs meilisearch
 
-# Connect to PostgreSQL directly (local install)
-psql -U postgres -d dms
+# Connect to PostgreSQL directly
+docker exec -it dms_postgres psql -U postgres -d dms
 ```
 
 ### Frontend
@@ -242,10 +237,10 @@ npm run lint     # check for lint errors
 ## Common Issues
 
 ### "Database connection refused"
-Make sure PostgreSQL is running locally on port 5432 and the `dms` database exists:
+Make sure Docker is running and the containers are up:
 ```bash
-psql -U postgres -c "\l"
-psql -U postgres -c "CREATE DATABASE dms;"
+docker compose up -d
+docker compose ps
 ```
 
 ### "LibreOffice not found"
@@ -253,9 +248,9 @@ Check `LIBREOFFICE_PATH` in your `.env`. Default is `C:\Program Files\LibreOffic
 On Linux: `which soffice` to find the path.
 
 ### "Alembic migration fails"
-Make sure the database exists and `DATABASE_URL` in `.env` is correct.
+Make sure Docker containers are running and `DATABASE_URL` in `.env` points to port `5433`.
 ```bash
-psql -U postgres -c "CREATE DATABASE dms;"
+docker compose up -d
 ```
 
 ### "CORS error in browser"
