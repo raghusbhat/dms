@@ -40,3 +40,6 @@ class User(Base, TimestampMixin):
     audit_logs: Mapped[list["AuditLog"]] = relationship(  # type: ignore[name-defined]
         "AuditLog", back_populates="user"
     )
+    workflow_tasks: Mapped[list["WorkflowTask"]] = relationship(  # type: ignore[name-defined]
+        "WorkflowTask", back_populates="user"
+    )

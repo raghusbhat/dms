@@ -56,6 +56,7 @@ class Document(Base, TimestampMixin):
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, server_default="{}", nullable=False
     )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="uploaded")
 
     folder: Mapped["Folder | None"] = relationship("Folder", back_populates="documents")
     versions: Mapped[list["DocumentVersion"]] = relationship(
@@ -63,6 +64,18 @@ class Document(Base, TimestampMixin):
         back_populates="document",
         foreign_keys="DocumentVersion.document_id",
         order_by="DocumentVersion.version_number",
+    )
+    extraction: Mapped["DocumentExtraction | None"] = relationship(  # type: ignore[name-defined]
+        "DocumentExtraction",
+        back_populates="document",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    workflow_instance: Mapped["WorkflowInstance | None"] = relationship(  # type: ignore[name-defined]
+        "WorkflowInstance",
+        back_populates="document",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
 

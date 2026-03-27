@@ -41,3 +41,16 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
     return user
+
+
+def require_role(*roles: str):
+    """FastAPI dependency factory. Usage: Depends(require_role('Admin', 'reviewer'))"""
+    async def _check(current_user: User = Depends(get_current_user)) -> User:
+        user_role = current_user.role.name if current_user.role else None
+        if user_role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires role: {' or '.join(roles)}",
+            )
+        return current_user
+    return _check

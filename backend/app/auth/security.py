@@ -6,8 +6,9 @@ import jwt
 from app.config import settings
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+REFRESH_TOKEN_REMEMBER_ME_DAYS = 30
 
 
 def hash_password(password: str) -> str:
@@ -30,8 +31,9 @@ def create_access_token(user_id: str, email: str, role: str | None) -> str:
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def create_refresh_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+def create_refresh_token(user_id: str, remember_me: bool = False) -> str:
+    days = REFRESH_TOKEN_REMEMBER_ME_DAYS if remember_me else REFRESH_TOKEN_EXPIRE_DAYS
+    expire = datetime.now(timezone.utc) + timedelta(days=days)
     payload = {
         "sub": user_id,
         "type": "refresh",

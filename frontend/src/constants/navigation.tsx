@@ -1,4 +1,4 @@
-import { LayoutDashboard, FolderOpen, Search, Settings2 } from "lucide-react";
+import { LayoutDashboard, FolderOpen, Settings2, CheckSquare } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export interface NavItem {
@@ -10,7 +10,7 @@ export interface NavItem {
 export const PRIMARY_NAV: NavItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
   { label: "Documents", path: "/documents", icon: FolderOpen },
-  { label: "Search", path: "/search", icon: Search },
+  { label: "Approvals", path: "/tasks", icon: CheckSquare },
 ];
 
 export const SECONDARY_NAV: NavItem[] = [

@@ -117,10 +117,10 @@ const UploadDialog = ({ open, onClose, onUploaded }: Props) => {
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Upload document</DialogTitle>
+          <DialogTitle className="text-sm font-semibold">Upload document</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 pt-1">
+        <div className="flex flex-col gap-4">
           {/* Drop zone — shown when idle or after error */}
           {(state.stage === "idle" || state.stage === "error") && (
             <button
@@ -159,9 +159,11 @@ const UploadDialog = ({ open, onClose, onUploaded }: Props) => {
 
           {/* File selected — confirm before uploading */}
           {state.stage === "selected" && (
-            <div className="rounded-lg border border-border px-4 py-3">
-              <p className="text-sm font-medium text-foreground truncate">{state.file.name}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{formatBytes(state.file.size)}</p>
+            <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{state.file.name}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{formatBytes(state.file.size)}</p>
+              </div>
             </div>
           )}
 

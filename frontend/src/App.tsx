@@ -6,7 +6,7 @@ import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import DocumentsPage from "@/pages/DocumentsPage";
 import DocumentViewerPage from "@/pages/DocumentViewerPage";
-import SearchPage from "@/pages/SearchPage";
+import TasksPage from "@/pages/TasksPage";
 import AdminPage from "@/pages/AdminPage";
 
 const App = () => {
@@ -21,7 +21,7 @@ const App = () => {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/documents" element={<DocumentsPage />} />
               <Route path="/documents/:id" element={<DocumentViewerPage />} />
-              <Route path="/search" element={<SearchPage />} />
+              <Route path="/tasks" element={<TasksPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

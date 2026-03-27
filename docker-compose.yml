@@ -1,0 +1,89 @@
+# --------------------------------------------------------------------
+# DMS — Local Development Infrastructure
+#
+# Starts: Redis, MinIO, Meilisearch
+# Does NOT start the backend or frontend — run those separately.
+# PostgreSQL: uses local_postgres (port 5432) — already running outside Docker.
+#
+# Usage:
+#   docker compose up -d          (start all)
+#   docker compose down           (stop all, keep data)
+#   docker compose down -v        (stop all + delete all data)
+# --------------------------------------------------------------------
+
+services:
+  # ------------------------------------------------------------------
+  # Redis — background job queue (Celery broker + backend)
+  # Also used for WebSocket pub/sub notifications
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: dms_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------------------------------
+  # MinIO — S3-compatible local file storage
+  # Console: http://localhost:9001  (user: minioadmin / minioadmin)
+  # API:     http://localhost:9000
+  # ------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: dms_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ------------------------------------------------------------------
+  # Meilisearch — full-text search (Phase 10)
+  # Dashboard: http://localhost:7700
+  # ------------------------------------------------------------------
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    container_name: dms_meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: "dev-master-key-change-in-production"
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilisearch_data:/meili_data
+
+  # ------------------------------------------------------------------
+  # Mailhog — local email testing (catches all outgoing email)
+  # Web UI: http://localhost:8025
+  # SMTP:   localhost:1025
+  # ------------------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: dms_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+  redis_data:
+  minio_data:
+  meilisearch_data:

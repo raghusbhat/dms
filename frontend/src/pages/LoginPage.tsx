@@ -37,13 +37,17 @@ const BrandGraphic = () => (
   </svg>
 );
 
+const REMEMBER_ME_KEY = "dms_remember_email";
+
 const LoginPage = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState("");
+  const savedEmail = localStorage.getItem(REMEMBER_ME_KEY) ?? "";
+  const [email, setEmail] = useState(savedEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(savedEmail !== "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -52,7 +56,12 @@ const LoginPage = () => {
     setError(null);
     setIsSubmitting(true);
     try {
-      await login(email, password);
+      await login(email, password, rememberMe);
+      if (rememberMe) {
+        localStorage.setItem(REMEMBER_ME_KEY, email);
+      } else {
+        localStorage.removeItem(REMEMBER_ME_KEY);
+      }
       navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -95,7 +104,7 @@ const LoginPage = () => {
       )}>
         <div className={cn(
           "w-full max-w-sm flex flex-col gap-6",
-          "rounded-xl border border-border bg-zinc-50 p-6 shadow-sm",
+          "lg:p-6",
         )}>
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
@@ -150,6 +159,19 @@ const LoginPage = () => {
                   )}
                 </button>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="remember"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <Label htmlFor="remember" className="text-sm text-muted-foreground cursor-pointer">
+                Remember me
+              </Label>
             </div>
 
             {error && <p className="text-sm text-destructive">{error}</p>}

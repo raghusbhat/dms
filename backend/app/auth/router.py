@@ -28,18 +28,19 @@ def _set_access_cookie(response: Response, token: str) -> None:
         httponly=True,
         secure=_SECURE,
         samesite="lax",
-        max_age=15 * 60,
+        max_age=60 * 60,
     )
 
 
-def _set_refresh_cookie(response: Response, token: str) -> None:
+def _set_refresh_cookie(response: Response, token: str, remember_me: bool = False) -> None:
+    max_age = (30 if remember_me else 7) * 24 * 60 * 60
     response.set_cookie(
         key="refresh_token",
         value=token,
         httponly=True,
         secure=_SECURE,
         samesite="lax",
-        max_age=7 * 24 * 60 * 60,
+        max_age=max_age,
         path="/auth/refresh",
     )
 
@@ -74,7 +75,7 @@ async def login(
 
     role_name = user.role.name if user.role else None
     _set_access_cookie(response, create_access_token(str(user.id), user.email, role_name))
-    _set_refresh_cookie(response, create_refresh_token(str(user.id)))
+    _set_refresh_cookie(response, create_refresh_token(str(user.id), body.remember_me), body.remember_me)
 
     return _user_response(user)
 

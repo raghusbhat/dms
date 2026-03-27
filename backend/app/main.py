@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import router as auth_router
-from app.routers import documents, health
+from app.routers import documents, health, users, workflow
 
 # Configure logging so that app.* loggers surface in the uvicorn console.
 logging.config.dictConfig({
@@ -86,3 +86,5 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(health.router)
 app.include_router(auth_router.router)
 app.include_router(documents.router)
+app.include_router(workflow.router)
+app.include_router(users.router)

@@ -56,6 +56,21 @@ const request = async (
   return res;
 };
 
+const refreshAuth = async (): Promise<boolean> => {
+  try {
+    const res = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+const isAuthPath = (path: string) =>
+  path.includes("/auth/login") || path.includes("/auth/refresh");
+
 // Convenience: throws ApiError if response is not ok.
 export const assertOk = async (res: Response): Promise<void> => {
   if (!res.ok) {
@@ -64,6 +79,44 @@ export const assertOk = async (res: Response): Promise<void> => {
 };
 
 export const api = {
-  get: (path: string) => request("GET", path),
-  post: (path: string, body?: RequestBody) => request("POST", path, body),
+  get: async (path: string) => {
+    let res = await request("GET", path);
+    if (res.status === 401 && !isAuthPath(path)) {
+      const refreshed = await refreshAuth();
+      if (refreshed) {
+        res = await request("GET", path);
+      }
+    }
+    return res;
+  },
+  post: async (path: string, body?: RequestBody) => {
+    let res = await request("POST", path, body);
+    if (res.status === 401 && !isAuthPath(path)) {
+      const refreshed = await refreshAuth();
+      if (refreshed) {
+        res = await request("POST", path, body);
+      }
+    }
+    return res;
+  },
+  patch: async (path: string, body?: RequestBody) => {
+    let res = await request("PATCH", path, body);
+    if (res.status === 401 && !isAuthPath(path)) {
+      const refreshed = await refreshAuth();
+      if (refreshed) {
+        res = await request("PATCH", path, body);
+      }
+    }
+    return res;
+  },
+  delete: async (path: string) => {
+    let res = await request("DELETE", path);
+    if (res.status === 401 && !isAuthPath(path)) {
+      const refreshed = await refreshAuth();
+      if (refreshed) {
+        res = await request("DELETE", path);
+      }
+    }
+    return res;
+  },
 };

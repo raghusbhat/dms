@@ -6,11 +6,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
+
+import asyncio
 
 from app.auth.dependencies import get_current_user
 from app.config import settings
@@ -21,9 +24,12 @@ from app.conversion.libreoffice import (
 )
 from app.database import get_db
 from app.models.document import Document, DocumentVersion
+from app.models.extraction import DocumentExtraction
 from app.models.user import User
+from app.services.search import get_all_ids_for_query
 from app.storage.local import LocalStorageAdapter
 from app.storage.registry import storage
+from app.workers.extraction_worker import process_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -39,14 +45,31 @@ class DocumentVersionOut(BaseModel):
     created_at: datetime
 
 
+class ExtractionOut(BaseModel):
+    document_type: str | None
+    type_confidence: float | None
+    sensitivity: str | None
+    summary: str | None
+    key_fields: dict | None
+
+
 class DocumentOut(BaseModel):
     id: str
     title: str
+    status: str
     folder_id: str | None
     current_version_id: str | None
     created_at: datetime
     updated_at: datetime
     latest_version: DocumentVersionOut | None
+    extraction: ExtractionOut | None
+
+
+class DocumentPage(BaseModel):
+    items: list[DocumentOut]
+    total: int
+    page: int
+    pages: int
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -103,24 +126,106 @@ async def upload_document(
     await db.refresh(doc)
     await db.refresh(version)
 
+    task = process_document.delay(str(doc.id))
+    logger.info("[UPLOAD] Dispatched extraction task — document_id=%s task_id=%s", doc.id, task.id)
+
     return _doc_out(doc, version)
 
 
-@router.get("", response_model=list[DocumentOut])
+@router.get("", response_model=DocumentPage)
 async def list_documents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[DocumentOut]:
-    result = await db.execute(
-        select(Document).order_by(Document.updated_at.desc())
-    )
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    q: str | None = Query(None),
+    document_type: str | None = Query(None),
+    sensitivity: str | None = Query(None),
+    status: str | None = Query(None),
+    date_from: datetime | None = Query(None, description="ISO 8601 — filter updated_at >= this date"),
+    date_to: datetime | None = Query(None, description="ISO 8601 — filter updated_at <= this date"),
+    sort_by: str = Query("updated_at", description="updated_at | title | created_at"),
+    sort_order: str = Query("desc", description="asc | desc"),
+) -> DocumentPage:
+    date_from_ts = int(date_from.timestamp()) if date_from else None
+    date_to_ts = int(date_to.timestamp()) if date_to else None
+
+    # ── Full-text search via Meilisearch ─────────────────────────────────────
+    if q:
+        ms_ids = await asyncio.to_thread(
+            get_all_ids_for_query,
+            q,
+            document_type=document_type,
+            sensitivity=sensitivity,
+            status=status,
+            date_from_ts=date_from_ts,
+            date_to_ts=date_to_ts,
+        )
+        if not ms_ids:
+            return DocumentPage(items=[], total=0, page=page, pages=1)
+
+        total = len(ms_ids)
+        page_ids = ms_ids[(page - 1) * limit : page * limit]
+        uid_list = [uuid.UUID(i) for i in page_ids]
+
+        result = await db.execute(select(Document).where(Document.id.in_(uid_list)))
+        docs_by_id = {str(d.id): d for d in result.scalars().all()}
+
+        out = []
+        for doc_id in page_ids:
+            doc = docs_by_id.get(doc_id)
+            if doc:
+                version = await _get_current_version(db, doc)
+                extraction = await _get_extraction(db, doc)
+                out.append(_doc_out(doc, version, extraction))
+
+        return DocumentPage(
+            items=out,
+            total=total,
+            page=page,
+            pages=max(1, -(-total // limit)),
+        )
+
+    # ── Standard SQL query (no search term) ──────────────────────────────────
+    def _apply_filters(q_obj):
+        if status:
+            q_obj = q_obj.where(Document.status == status)
+        if date_from:
+            q_obj = q_obj.where(Document.updated_at >= date_from)
+        if date_to:
+            q_obj = q_obj.where(Document.updated_at <= date_to)
+        if document_type or sensitivity:
+            ext = aliased(DocumentExtraction)
+            q_obj = q_obj.join(ext, Document.id == ext.document_id, isouter=True)
+            if document_type:
+                q_obj = q_obj.where(ext.document_type == document_type)
+            if sensitivity:
+                q_obj = q_obj.where(ext.sensitivity == sensitivity)
+        return q_obj
+
+    count_result = await db.execute(_apply_filters(select(func.count()).select_from(Document)))
+    total = count_result.scalar_one()
+
+    valid_sort_fields = {"updated_at": Document.updated_at, "title": Document.title, "created_at": Document.created_at}
+    sort_field = valid_sort_fields.get(sort_by, Document.updated_at)
+    order = sort_field.asc() if sort_order.lower() == "asc" else sort_field.desc()
+
+    offset = (page - 1) * limit
+    result = await db.execute(_apply_filters(select(Document)).order_by(order).offset(offset).limit(limit))
     docs = result.scalars().all()
 
     out = []
     for doc in docs:
         version = await _get_current_version(db, doc)
-        out.append(_doc_out(doc, version))
-    return out
+        extraction = await _get_extraction(db, doc)
+        out.append(_doc_out(doc, version, extraction))
+
+    return DocumentPage(
+        items=out,
+        total=total,
+        page=page,
+        pages=max(1, -(-total // limit)),
+    )
 
 
 @router.get("/{document_id}", response_model=DocumentOut)
@@ -131,7 +236,8 @@ async def get_document(
 ) -> DocumentOut:
     doc = await _get_doc_or_404(db, document_id)
     version = await _get_current_version(db, doc)
-    return _doc_out(doc, version)
+    extraction = await _get_extraction(db, doc)
+    return _doc_out(doc, version, extraction)
 
 
 @router.get("/{document_id}/preview")
@@ -225,10 +331,24 @@ async def _get_current_version(
     return result.scalar_one_or_none()
 
 
-def _doc_out(doc: Document, version: DocumentVersion | None) -> DocumentOut:
+async def _get_extraction(
+    db: AsyncSession, doc: Document
+) -> DocumentExtraction | None:
+    result = await db.execute(
+        select(DocumentExtraction).where(DocumentExtraction.document_id == doc.id)
+    )
+    return result.scalar_one_or_none()
+
+
+def _doc_out(
+    doc: Document,
+    version: DocumentVersion | None,
+    extraction: DocumentExtraction | None = None,
+) -> DocumentOut:
     return DocumentOut(
         id=str(doc.id),
         title=doc.title,
+        status=doc.status,
         folder_id=str(doc.folder_id) if doc.folder_id else None,
         current_version_id=str(doc.current_version_id) if doc.current_version_id else None,
         created_at=doc.created_at,
@@ -241,4 +361,11 @@ def _doc_out(doc: Document, version: DocumentVersion | None) -> DocumentOut:
             mime_type=version.mime_type,
             created_at=version.created_at,
         ) if version else None,
+        extraction=ExtractionOut(
+            document_type=extraction.document_type,
+            type_confidence=extraction.type_confidence,
+            sensitivity=extraction.sensitivity,
+            summary=extraction.summary,
+            key_fields=extraction.key_fields,
+        ) if extraction else None,
     )

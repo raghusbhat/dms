@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(alembic *)",
+      "Bash(.venv\\scripts\\activate)",
+      "Bash(python *)",
+      "Bash(npm install *)"
+    ]
+  }
+}
