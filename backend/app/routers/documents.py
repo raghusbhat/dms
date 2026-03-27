@@ -27,6 +27,7 @@ from app.models.document import Document, DocumentVersion
 from app.models.extraction import DocumentExtraction
 from app.models.user import User
 from app.services.search import get_all_ids_for_query
+from app.services.rag import answer_question
 from app.storage.local import LocalStorageAdapter
 from app.storage.registry import storage
 from app.workers.extraction_worker import process_document
@@ -70,6 +71,16 @@ class DocumentPage(BaseModel):
     total: int
     page: int
     pages: int
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+class AskResponse(BaseModel):
+    answer: str
+    document_id: str
+    question: str
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -369,3 +380,26 @@ def _doc_out(
             key_fields=extraction.key_fields,
         ) if extraction else None,
     )
+
+
+@router.post("/{document_id}/ask", response_model=AskResponse)
+async def ask_document(
+    document_id: str,
+    body: AskRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AskResponse:
+    doc_result = await db.execute(
+        select(Document).where(Document.id == uuid.UUID(document_id))
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    answer = await asyncio.to_thread(
+        answer_question,
+        document_id,
+        body.question,
+        doc.title,
+    )
+    return AskResponse(answer=answer, document_id=document_id, question=body.question)

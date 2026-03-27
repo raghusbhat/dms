@@ -55,6 +55,11 @@ const DocumentViewerPage = () => {
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [expandedEntityGroups, setExpandedEntityGroups] = useState<Set<string>>(new Set());
 
+  // Ask states
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askAnswer, setAskAnswer] = useState<string | null>(null);
+  const [isAsking, setIsAsking] = useState(false);
+
   const toggleEntityGroup = (label: string) => {
     setExpandedEntityGroups((prev) => {
       const next = new Set(prev);
@@ -69,6 +74,18 @@ const DocumentViewerPage = () => {
       setCopiedSummary(true);
       setTimeout(() => setCopiedSummary(false), 2000);
     });
+  };
+
+  const handleAsk = () => {
+    if (!askQuestion.trim() || !doc) return;
+    setIsAsking(true);
+    setAskAnswer(null);
+    api
+      .post(`/documents/${doc.id}/ask`, { question: askQuestion })
+      .then((res) => res.json())
+      .then((data) => setAskAnswer(data.answer))
+      .catch(() => setAskAnswer("Failed to get an answer. Please try again."))
+      .finally(() => setIsAsking(false));
   };
 
   useEffect(() => {
@@ -575,6 +592,30 @@ const DocumentViewerPage = () => {
                 )}
               </CollapsibleContent>
             </Collapsible>
+
+            <div className="border-t border-border" />
+
+            {/* Ask this document */}
+            <div className="px-4 py-3">
+              <p className="text-xs font-semibold text-foreground mb-2">Ask this document</p>
+              <div className="flex gap-2">
+                <input
+                  value={askQuestion}
+                  onChange={(e) => setAskQuestion(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAsk()}
+                  placeholder="What is the payment term?"
+                  className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+                <Button size="sm" onClick={handleAsk} disabled={isAsking || !askQuestion.trim()} className="h-8 text-xs">
+                  {isAsking ? "..." : "Ask"}
+                </Button>
+              </div>
+              {askAnswer && (
+                <div className="mt-2 rounded-md bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-foreground leading-relaxed">
+                  {askAnswer}
+                </div>
+              )}
+            </div>
 
             <div className="border-t border-border" />
 

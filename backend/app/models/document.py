@@ -77,6 +77,11 @@ class Document(Base, TimestampMixin):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    chunks: Mapped[list["DocumentChunk"]] = relationship(  # type: ignore[name-defined]
+        "DocumentChunk",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
 
 
 class DocumentVersion(Base):

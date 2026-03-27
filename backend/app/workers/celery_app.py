@@ -6,7 +6,7 @@ celery_app = Celery(
     "dms",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.workers.extraction_worker"],
+    include=["app.workers.extraction_worker", "app.workers.rag_worker"],
 )
 
 celery_app.conf.update(

@@ -16,6 +16,7 @@ from app.services.ner import extract_entities
 from app.services.ai import classify_document
 from app.services.search import index_document as search_index_document
 from app.workers.celery_app import celery_app
+from app.workers.rag_worker import embed_document
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,13 @@ def process_document(self, document_id: str) -> None:
 
         document.status = "ready"
         db.commit()
+
+        # Dispatch RAG embedding task — failure must never fail the worker
+        try:
+            embed_document.delay(str(document.id))
+            logger.info("[WORKER] RAG embedding task queued — document_id=%s", document.id)
+        except Exception as exc:
+            logger.warning("[WORKER] RAG embedding queue failed (non-fatal): %s", exc)
 
         # Index in Meilisearch — failure must never fail the worker
         try:
