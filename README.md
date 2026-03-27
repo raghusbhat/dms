@@ -92,9 +92,6 @@ python scripts/seed_workflow.py
 # Index existing documents into Meilisearch (run once after setup)
 python scripts/reindex_all.py
 
-# Embed existing documents for RAG/Ask feature (run once after setup)
-python scripts/reembed_all.py
-
 # Start the backend
 uvicorn app.main:app --reload --port 8000
 ```
@@ -161,7 +158,7 @@ dms/
 │   │   ├── create_admin.py  ← run once after first migration (creates admin user)
 │   │   ├── seed_workflow.py ← run once after create_admin (creates reviewer role + test user + workflow rule)
 │   │   ├── reindex_all.py   ← run once after setup to index existing documents into Meilisearch
-│   │   └── reembed_all.py   ← run once after setup to embed existing documents for Ask feature
+│   │   └── reembed_all.py   ← utility: re-embed documents if RAG was added to an existing install
 │   └── app/
 │       ├── main.py          ← FastAPI app, CORS, startup
 │       ├── config.py        ← all settings from .env
