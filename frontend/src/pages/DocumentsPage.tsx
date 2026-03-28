@@ -12,7 +12,7 @@ import {
 import UploadDialog from "@/components/documents/UploadDialog";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import type { Document, DocumentPage } from "@/types/document";
+import type { Document } from "@/types/document";
 
 const BASE_URL = "http://localhost:8000";
 const POLL_INTERVAL_MS = 2000;
@@ -20,6 +20,13 @@ const POLL_TIMEOUT_MS = 60000;
 const DEFAULT_LIMIT = 25;
 
 const HARD_CODED_TYPES = ["Contract", "Invoice", "NDA", "Report", "Policy", "Receipt", "Other"];
+
+interface DocumentPage {
+  items: Document[];
+  total: number;
+  page: number;
+  pages: number;
+}
 
 const DATE_PRESETS = [
   { label: "All time", value: "all" },
@@ -77,7 +84,7 @@ const DocumentsPage = () => {
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const navigate = useNavigate();
-  const pollingRefs = useRef<Map<string, { interval: NodeJS.Timeout; timeout: NodeJS.Timeout }>>(new Map());
+  const pollingRefs = useRef<Map<string, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>(new Map());
 
   // Filter states
   const [q, setQ] = useState("");
@@ -195,18 +202,18 @@ const DocumentsPage = () => {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "uploaded":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-200 text-slate-800">Uploaded</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-zinc-200 text-zinc-800">Uploaded</span>;
       case "processing":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-200 text-blue-900">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-200/60 text-blue-900">
             <Spinner />
             Processing
           </span>
         );
       case "ready":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-green-200 text-green-900">Ready</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-200 text-emerald-900">Ready</span>;
       case "processing_failed":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-red-200 text-red-900">Failed</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-rose-200 text-rose-900">Failed</span>;
       default:
         return <span className="text-xs text-muted-foreground">{status}</span>;
     }
@@ -215,10 +222,10 @@ const DocumentsPage = () => {
   const getSensitivityBadge = (sensitivity: string | null) => {
     if (!sensitivity) return <span className="text-xs text-muted-foreground">—</span>;
     const styles: Record<string, string> = {
-      public: "bg-slate-200 text-slate-800",
-      internal: "bg-blue-200 text-blue-900",
-      confidential: "bg-amber-200 text-amber-900",
-      restricted: "bg-red-200 text-red-900",
+      public: "bg-gray-200 text-gray-800",
+      internal: "bg-sky-200 text-sky-900",
+      confidential: "bg-orange-200 text-orange-900",
+      restricted: "bg-crimson-200 text-crimson-900",
     };
     const style = styles[sensitivity] || styles.public;
     return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${style}`}>{sensitivity}</span>;
@@ -415,7 +422,7 @@ const DocumentsPage = () => {
                 </div>
                 <span className="text-xs">
                   {doc.extraction?.document_type ? (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md font-medium bg-purple-100 text-purple-900">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md font-medium bg-violet-100 text-violet-900">
                       {doc.extraction.document_type}
                     </span>
                   ) : (

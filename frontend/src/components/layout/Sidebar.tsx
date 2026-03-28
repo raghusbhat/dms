@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { LogOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PRIMARY_NAV, SECONDARY_NAV } from "@/constants/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import SidebarNavItem from "./SidebarNavItem";
@@ -19,7 +20,12 @@ const getInitials = (name: string): string => {
   return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 };
 
-const Sidebar = () => {
+interface SidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -31,19 +37,36 @@ const Sidebar = () => {
   const initials = user?.name ? getInitials(user.name) : "?";
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-20 flex w-60 flex-col border-r border-border bg-sidebar">
+    <TooltipProvider>
+    <aside className={`fixed inset-y-0 left-0 z-20 flex flex-col border-r border-border bg-sidebar transition-all duration-200 ${collapsed ? "w-14" : "w-60"}`}>
+      {/* Collapse toggle — tab style, sticks out to the right of the sidebar */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={onToggle}
+            className="absolute right-0 top-14 translate-x-full z-30 rounded-r-md border border-l-0 border-border bg-primary/10 hover:bg-primary/20 text-primary px-0.5 py-3 shadow-sm transition-colors"
+          >
+            {collapsed ? <ChevronRight className="size-3" /> : <ChevronLeft className="size-3" />}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        </TooltipContent>
+      </Tooltip>
 
       {/* Brand */}
       <div className="flex h-14 shrink-0 flex-col items-center justify-center border-b border-border px-4">
-        <img src="/logo.svg" alt="DMS" className="h-5 w-auto" />
-        <span className="mt-0.5 text-[10px] font-medium text-muted-foreground">Document Management System</span>
+        <img src={collapsed ? "/favicon.svg" : "/logo.svg"} alt="DMS" className={collapsed ? "h-5 w-5" : "h-5 w-auto"} />
+        {!collapsed && (
+          <span className="mt-0.5 text-[10px] font-medium text-muted-foreground">Document Management System</span>
+        )}
       </div>
 
       {/* Primary nav */}
       <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2 overflow-y-auto">
         {PRIMARY_NAV.map((item) => {
           if (item.label === "Approvals" && user?.role === "uploader") return null;
-          return <SidebarNavItem key={item.path} {...item} />;
+          return <SidebarNavItem key={item.path} {...item} collapsed={collapsed} />;
         })}
       </nav>
 
@@ -53,30 +76,32 @@ const Sidebar = () => {
           <div className="border-t border-border" />
           <div className="px-2 py-2">
             {SECONDARY_NAV.map((item) => (
-              <SidebarNavItem key={item.path} {...item} />
+              <SidebarNavItem key={item.path} {...item} collapsed={collapsed} />
             ))}
           </div>
         </>
       )}
 
       {/* User section */}
-      <div className="border-t border-border px-3 py-3">
+      <div className="mt-auto border-t border-border">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex w-full items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-accent/60 transition-colors outline-none">
+            <button className={`flex items-center gap-2.5 px-3 py-3 hover:bg-accent/60 transition-colors outline-none ${collapsed ? "justify-center" : "w-full"}`}>
               <Avatar className="size-7 shrink-0">
                 <AvatarFallback className="bg-primary text-primary-foreground text-[11px] font-semibold">
                   {initials}
                 </AvatarFallback>
               </Avatar>
-              <div className="flex min-w-0 flex-1 flex-col text-left">
-                <span className="truncate text-xs font-medium text-foreground leading-tight">
-                  {user?.name}
-                </span>
-                <span className="truncate text-[11px] text-muted-foreground leading-tight">
-                  {user?.email}
-                </span>
-              </div>
+              {!collapsed && (
+                <div className="flex min-w-0 flex-col text-left">
+                  <span className="truncate text-xs font-medium text-foreground leading-tight">
+                    {user?.name}
+                  </span>
+                  <span className="truncate text-[11px] text-muted-foreground leading-tight">
+                    {user?.email}
+                  </span>
+                </div>
+              )}
             </button>
           </DropdownMenuTrigger>
 
@@ -109,6 +134,7 @@ const Sidebar = () => {
       </div>
 
     </aside>
+    </TooltipProvider>
   );
 };
 

@@ -115,7 +115,7 @@ const AdminPage = () => {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await api.post("/admin/users", addForm);
+      const res = await api.post("/admin/users", addForm as unknown as Record<string, unknown>);
       await assertOk(res);
       setAddDialogOpen(false);
       setAddForm({ name: "", email: "", password: "", role_id: "" });

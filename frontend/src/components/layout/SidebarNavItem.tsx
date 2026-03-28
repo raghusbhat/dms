@@ -1,9 +1,14 @@
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { NavItem } from "@/constants/navigation";
 
-const SidebarNavItem = ({ label, path, icon: Icon }: NavItem) => {
-  return (
+interface SidebarNavItemProps extends NavItem {
+  collapsed: boolean;
+}
+
+const SidebarNavItem = ({ label, path, icon: Icon, collapsed }: SidebarNavItemProps) => {
+  const content = (
     <NavLink
       to={path}
       className={({ isActive }) =>
@@ -16,9 +21,20 @@ const SidebarNavItem = ({ label, path, icon: Icon }: NavItem) => {
       }
     >
       <Icon className="size-4 shrink-0" />
-      {label}
+      {!collapsed && label}
     </NavLink>
   );
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return content;
 };
 
 export default SidebarNavItem;
