@@ -1,14 +1,20 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, FileText, Upload, Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, X } from "lucide-react";
+import { Download, FileText, Upload, Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAuth } from "@/contexts/AuthContext";
 import UploadDialog from "@/components/documents/UploadDialog";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -75,6 +81,7 @@ function getDateRange(preset: string): { date_from?: string; date_to?: string } 
 }
 
 const DocumentsPage = () => {
+  const { user } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +92,11 @@ const DocumentsPage = () => {
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const navigate = useNavigate();
   const pollingRefs = useRef<Map<string, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>(new Map());
+
+  // Delete dialog state
+  const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
+  const [deleteDocTitle, setDeleteDocTitle] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Filter states
   const [q, setQ] = useState("");
@@ -270,6 +282,7 @@ const DocumentsPage = () => {
   const endRow = Math.min(currentPage * limit, total);
 
   return (
+    <TooltipProvider>
     <div className="flex flex-col flex-1 min-h-0">
       {/* Page header */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-6">
@@ -438,20 +451,76 @@ const DocumentsPage = () => {
                 <span className="text-muted-foreground text-xs">
                   {formatDate(doc.updated_at)}
                 </span>
-                <a
-                  href={`${BASE_URL}/documents/${doc.id}/download`}
-                  download
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                  title="Download"
-                >
-                  <Download className="size-3.5" />
-                </a>
+                <div className="flex items-center gap-1">
+                  <a
+                    href={`${BASE_URL}/documents/${doc.id}/download`}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                    title="Download"
+                  >
+                    <Download className="size-3.5" />
+                  </a>
+                  {user?.role === "Admin" && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteDocId(doc.id);
+                            setDeleteDocTitle(doc.title);
+                          }}
+                          className="flex items-center justify-center rounded p-1 text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Delete document</TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteDocId !== null} onOpenChange={(open) => !open && setDeleteDocId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <span className="font-medium text-foreground">{deleteDocTitle}</span> and all its versions. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeleting}
+              onClick={async () => {
+                if (!deleteDocId) return;
+                setIsDeleting(true);
+                try {
+                  const res = await api.delete(`/documents/${deleteDocId}`);
+                  if (res.ok) {
+                    setDocuments((prev) => prev.filter((d) => d.id !== deleteDocId));
+                    setDeleteDocId(null);
+                  }
+                } catch {
+                  // silently ignore — dialog stays open so user can retry
+                } finally {
+                  setIsDeleting(false);
+                }
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {isDeleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Fixed footer */}
       <div className="flex h-11 shrink-0 items-center justify-between border-t border-border bg-background px-4">
@@ -519,6 +588,7 @@ const DocumentsPage = () => {
         onUploaded={handleUploaded}
       />
     </div>
+    </TooltipProvider>
   );
 };
 

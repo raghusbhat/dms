@@ -64,6 +64,7 @@ class Document(Base, TimestampMixin):
         back_populates="document",
         foreign_keys="DocumentVersion.document_id",
         order_by="DocumentVersion.version_number",
+        passive_deletes=True,
     )
     extraction: Mapped["DocumentExtraction | None"] = relationship(  # type: ignore[name-defined]
         "DocumentExtraction",

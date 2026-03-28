@@ -20,6 +20,7 @@ export interface Document {
   title: string;
   folder_id: string | null;
   current_version_id: string | null;
+  tags: string[];
   created_at: string;
   updated_at: string;
   latest_version: DocumentVersion | null;

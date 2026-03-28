@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from typing import Literal
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
@@ -60,10 +61,17 @@ class DocumentOut(BaseModel):
     status: str
     folder_id: str | None
     current_version_id: str | None
+    tags: list[str]
     created_at: datetime
     updated_at: datetime
     latest_version: DocumentVersionOut | None
     extraction: ExtractionOut | None
+
+
+class MetadataPatchRequest(BaseModel):
+    document_type: str | None = None
+    sensitivity: Literal["public", "internal", "confidential", "restricted"] | None = None
+    tags: list[str] | None = None
 
 
 class DocumentPage(BaseModel):
@@ -317,6 +325,28 @@ async def download_document(
     )
 
 
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    doc = await _get_doc_or_404(db, document_id)
+    
+    user_role = current_user.role.name if current_user.role else None
+    if user_role != "Admin":
+        raise HTTPException(status_code=403, detail="Only admins can delete documents")
+    
+    await db.delete(doc)
+    await db.commit()
+    
+    try:
+        from app.services.search import delete_document as search_delete
+        search_delete(document_id)
+    except Exception as exc:
+        logger.warning("[DELETE] Meilisearch deletion failed (non-fatal): %s", exc)
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 async def _get_doc_or_404(db: AsyncSession, document_id: str) -> Document:
@@ -362,6 +392,7 @@ def _doc_out(
         status=doc.status,
         folder_id=str(doc.folder_id) if doc.folder_id else None,
         current_version_id=str(doc.current_version_id) if doc.current_version_id else None,
+        tags=doc.tags,
         created_at=doc.created_at,
         updated_at=doc.updated_at,
         latest_version=DocumentVersionOut(
@@ -380,6 +411,45 @@ def _doc_out(
             key_fields=extraction.key_fields,
         ) if extraction else None,
     )
+
+
+@router.patch("/{document_id}/metadata", response_model=DocumentOut)
+async def patch_metadata(
+    document_id: str,
+    body: MetadataPatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentOut:
+    doc = await _get_doc_or_404(db, document_id)
+    
+    user_role = current_user.role.name if current_user.role else None
+    if user_role == "uploader":
+        raise HTTPException(status_code=403, detail="Uploaders cannot edit metadata")
+    
+    if body.tags is not None:
+        doc.tags = body.tags
+    
+    if body.document_type is not None or body.sensitivity is not None:
+        result = await db.execute(
+            select(DocumentExtraction).where(DocumentExtraction.document_id == doc.id)
+        )
+        extraction = result.scalar_one_or_none()
+        if extraction is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Document has no AI extraction yet — cannot edit document_type or sensitivity.",
+            )
+        if body.document_type is not None:
+            extraction.document_type = body.document_type
+        if body.sensitivity is not None:
+            extraction.sensitivity = body.sensitivity
+    
+    await db.commit()
+    await db.refresh(doc)
+    
+    version = await _get_current_version(db, doc)
+    extraction = await _get_extraction(db, doc)
+    return _doc_out(doc, version, extraction)
 
 
 @router.post("/{document_id}/ask", response_model=AskResponse)

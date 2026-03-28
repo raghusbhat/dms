@@ -180,8 +180,8 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     api.get("/documents")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: Document[]) => setDocuments(data))
+      .then((r) => r.ok ? r.json() : { items: [] })
+      .then((data: { items: Document[] }) => setDocuments(data.items))
       .catch(() => setDocuments([]))
       .finally(() => setLoading(false));
   }, []);

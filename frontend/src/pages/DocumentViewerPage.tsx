@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/tooltip";
 import { api, assertOk } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Document as DmsDocument, WorkflowTask } from "@/types/document";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -85,6 +86,7 @@ type ViewerState =
 const DocumentViewerPage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [doc, setDoc] = useState<DmsDocument | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [state, setState] = useState<ViewerState>({ type: "loading" });
@@ -97,6 +99,11 @@ const DocumentViewerPage = () => {
   const [expandedEntityGroups, setExpandedEntityGroups] = useState<Set<string>>(
     new Set(),
   );
+
+  // Metadata edit states
+  const [isSavingMeta, setIsSavingMeta] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState("");
 
   // Ask states
   const [chatOpen, setChatOpen] = useState(false);
@@ -121,7 +128,7 @@ const DocumentViewerPage = () => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedSummary(true);
       setTimeout(() => setCopiedSummary(false), 2000);
-    });
+    }).catch(() => {});
   };
 
   const handleAsk = (question: string) => {
@@ -133,7 +140,10 @@ const DocumentViewerPage = () => {
 
     api
       .post(`/documents/${doc.id}/ask`, { question })
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error("Request failed");
+        return res.json();
+      })
       .then((data) => {
         setChatHistory((prev) => [
           ...prev,
@@ -150,6 +160,27 @@ const DocumentViewerPage = () => {
         ]);
       })
       .finally(() => setIsAsking(false));
+  };
+
+  const patchMetadata = async (patch: {
+    document_type?: string;
+    sensitivity?: string;
+    tags?: string[];
+  }) => {
+    if (!doc) return;
+    setIsSavingMeta(true);
+    setMetaError(null);
+    try {
+      const res = await api.patch(`/documents/${doc.id}/metadata`, patch);
+      assertOk(res);
+      const updated: DmsDocument = await res.json();
+      setDoc(updated);
+    } catch (err) {
+      setMetaError(err instanceof Error ? err.message : "Failed to save — please try again.");
+      setTimeout(() => setMetaError(null), 4000);
+    } finally {
+      setIsSavingMeta(false);
+    }
   };
 
   useEffect(() => {
@@ -817,47 +848,178 @@ const DocumentViewerPage = () => {
             {/* Content - only visible when open */}
             <div className={sidebarOpen ? "flex flex-col h-full" : "hidden"}>
               {/* Fixed metadata chips */}
+              {metaError && (
+                <div className="shrink-0 px-4 pt-2">
+                  <p className="text-[11px] text-destructive">{metaError}</p>
+                </div>
+              )}
               {doc && (
-                <div className="shrink-0 border-b border-border px-4 py-3 flex flex-wrap gap-1.5">
-                  {doc.extraction?.document_type && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-purple-100 text-purple-900">
-                      {doc.extraction.document_type}
-                    </span>
-                  )}
-                  {doc.extraction?.sensitivity &&
-                    (() => {
-                      const styles: Record<string, string> = {
-                        public: "bg-slate-200 text-slate-800",
-                        internal: "bg-blue-200 text-blue-900",
-                        confidential: "bg-amber-200 text-amber-900",
-                        restricted: "bg-red-200 text-red-900",
-                      };
-                      return (
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium ${styles[doc.extraction.sensitivity] ?? styles.public}`}
-                        >
-                          {doc.extraction.sensitivity}
-                        </span>
-                      );
-                    })()}
+                <div className="shrink-0 border-b border-border px-4 py-3 flex flex-col gap-2">
                   {(() => {
-                    const statusStyles: Record<string, string> = {
-                      uploaded: "bg-slate-200 text-slate-800",
-                      processing: "bg-blue-200 text-blue-900",
-                      ready: "bg-green-200 text-green-900",
-                      processing_failed: "bg-red-200 text-red-900",
-                    };
+                    const canEdit =
+                      doc.status === "ready" &&
+                      (user?.role === "Admin" || user?.role === "reviewer");
+
                     return (
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium ${statusStyles[doc.status] ?? "bg-slate-200 text-slate-800"}`}
-                      >
-                        {doc.status.replace("_", " ")}
-                      </span>
+                      <>
+                        {/* Row 1: classification + sensitivity (editable or read-only) */}
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          {/* Classification */}
+                          {canEdit ? (
+                            <Select
+                              value={doc.extraction?.document_type ?? ""}
+                              onValueChange={(val) =>
+                                patchMetadata({ document_type: val })
+                              }
+                              disabled={isSavingMeta}
+                            >
+                              <SelectTrigger className="h-6 text-[11px] w-auto min-w-[90px] px-2 py-0 bg-purple-50 border-purple-200 text-purple-900 rounded-md">
+                                <SelectValue placeholder="Type…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[
+                                  "Contract",
+                                  "Invoice",
+                                  "Report",
+                                  "Policy",
+                                  "Letter",
+                                  "NDA",
+                                  "Other",
+                                ].map((t) => (
+                                  <SelectItem
+                                    key={t}
+                                    value={t}
+                                    className="text-xs"
+                                  >
+                                    {t}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            doc.extraction?.document_type && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-purple-100 text-purple-900">
+                                {doc.extraction.document_type}
+                              </span>
+                            )
+                          )}
+
+                          {/* Sensitivity */}
+                          {canEdit ? (
+                            <Select
+                              value={doc.extraction?.sensitivity ?? ""}
+                              onValueChange={(val) =>
+                                patchMetadata({ sensitivity: val })
+                              }
+                              disabled={isSavingMeta}
+                            >
+                              <SelectTrigger className="h-6 text-[11px] w-auto min-w-[90px] px-2 py-0 rounded-md border">
+                                <SelectValue placeholder="Sensitivity…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[
+                                  "public",
+                                  "internal",
+                                  "confidential",
+                                  "restricted",
+                                ].map((s) => (
+                                  <SelectItem
+                                    key={s}
+                                    value={s}
+                                    className="text-xs capitalize"
+                                  >
+                                    {s}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            doc.extraction?.sensitivity &&
+                            (() => {
+                              const styles: Record<string, string> = {
+                                public: "bg-slate-200 text-slate-800",
+                                internal: "bg-blue-200 text-blue-900",
+                                confidential: "bg-amber-200 text-amber-900",
+                                restricted: "bg-red-200 text-red-900",
+                              };
+                              return (
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium ${styles[doc.extraction.sensitivity] ?? styles.public}`}
+                                >
+                                  {doc.extraction.sensitivity}
+                                </span>
+                              );
+                            })()
+                          )}
+
+                          {/* Status badge — always read-only */}
+                          {(() => {
+                            const statusStyles: Record<string, string> = {
+                              uploaded: "bg-slate-200 text-slate-800",
+                              processing: "bg-blue-200 text-blue-900",
+                              ready: "bg-green-200 text-green-900",
+                              processing_failed: "bg-red-200 text-red-900",
+                            };
+                            return (
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium ${statusStyles[doc.status] ?? "bg-slate-200 text-slate-800"}`}
+                              >
+                                {doc.status.replace("_", " ")}
+                              </span>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Row 2: Tags */}
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {(doc.tags ?? []).map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground border border-border"
+                            >
+                              {tag}
+                              {canEdit && (
+                                <button
+                                  onClick={() =>
+                                    patchMetadata({
+                                      tags: doc.tags.filter((t) => t !== tag),
+                                    })
+                                  }
+                                  disabled={isSavingMeta}
+                                  className="ml-0.5 hover:text-destructive transition-colors leading-none"
+                                  aria-label={`Remove tag ${tag}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {canEdit && (
+                            <input
+                              type="text"
+                              value={tagInput}
+                              onChange={(e) => setTagInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && tagInput.trim()) {
+                                  e.preventDefault();
+                                  const newTag = tagInput.trim();
+                                  if (!doc.tags?.includes(newTag)) {
+                                    patchMetadata({
+                                      tags: [...(doc.tags ?? []), newTag],
+                                    });
+                                  }
+                                  setTagInput("");
+                                }
+                              }}
+                              placeholder="Add tag…"
+                              disabled={isSavingMeta}
+                              className="h-5 w-20 text-[11px] px-1.5 rounded-md border border-dashed border-border bg-transparent placeholder:text-muted-foreground/50 outline-none focus:border-primary transition-colors"
+                            />
+                          )}
+                        </div>
+                      </>
                     );
                   })()}
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground">
-                    {formatDate(doc.updated_at)}
-                  </span>
                 </div>
               )}
 
