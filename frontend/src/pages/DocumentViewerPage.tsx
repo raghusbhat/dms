@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Download,
@@ -14,6 +14,9 @@ import {
   X,
   Send,
   Loader2,
+  Folder,
+  FolderOpen,
+  FileText as FileTextIcon,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -114,6 +117,7 @@ const DocumentViewerPage = () => {
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     return localStorage.getItem("viewer_sidebar_collapsed") !== "true";
   });
+  const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
   const toggleEntityGroup = (label: string) => {
     setExpandedEntityGroups((prev) => {
@@ -186,6 +190,25 @@ const DocumentViewerPage = () => {
   useEffect(() => {
     localStorage.setItem("viewer_sidebar_collapsed", String(!sidebarOpen));
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    if (!doc?.folder_id) { setFolderPath([]); return; }
+    api.get("/folders").then(async (res) => {
+      if (!res.ok) return;
+      type F = { id: string; name: string; children: F[] };
+      const roots: F[] = await res.json();
+      const buildPath = (nodes: F[], targetId: string, path: { id: string; name: string }[]): { id: string; name: string }[] | null => {
+        for (const f of nodes) {
+          const next = [...path, { id: f.id, name: f.name }];
+          if (f.id === targetId) return next;
+          const found = buildPath(f.children, targetId, next);
+          if (found) return found;
+        }
+        return null;
+      };
+      setFolderPath(buildPath(roots, doc.folder_id!, []) ?? []);
+    });
+  }, [doc?.folder_id]);
 
   useEffect(() => {
     if (!id) return;
@@ -402,21 +425,53 @@ const DocumentViewerPage = () => {
       <div className="flex flex-col flex-1 min-h-0">
         {/* Header */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
-          <div className="flex items-center gap-1.5 min-w-0 text-sm">
+          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
             <button
               onClick={() => navigate("/documents")}
-              className="shrink-0 text-muted-foreground hover:text-foreground hover:underline underline-offset-2 transition-colors"
+              className="flex items-center gap-1 shrink-0 text-xs text-primary/50 hover:text-primary transition-colors"
             >
-              Documents
+              <FolderOpen className="size-3 shrink-0" />
+              <span>Documents</span>
             </button>
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
-            <span className="truncate font-medium text-foreground">
+            {(() => {
+              const visible =
+                folderPath.length <= 2
+                  ? folderPath
+                  : [folderPath[0], { id: "__ellipsis__", name: "…" }, folderPath[folderPath.length - 1]];
+              return visible.map((f) => {
+                const isEllipsis = f.id === "__ellipsis__";
+                return (
+                  <Fragment key={f.id}>
+                    <ChevronRight className="size-3 shrink-0 text-primary/25" />
+                    {isEllipsis ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-default text-xs text-primary/40 shrink-0 px-0.5">…</span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-xs max-w-xs">
+                          {folderPath.map(f => f.name).join(" › ")}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <button
+                        onClick={() => navigate(`/documents?folder_id=${f.id}`)}
+                        className="flex items-center gap-1 shrink-0 text-xs text-primary/50 hover:text-primary transition-colors"
+                      >
+                        <Folder className="size-3" />
+                        <span>{f.name}</span>
+                      </button>
+                    )}
+                  </Fragment>
+                );
+              });
+            })()}
+            <ChevronRight className="size-3 shrink-0 text-primary/25" />
+            <span className="flex items-center gap-1 min-w-0 text-xs font-medium text-primary truncate">
+              <FileTextIcon className="size-3 shrink-0" />
               {doc?.title ?? "Loading..."}
             </span>
             {isConverting && (
-              <span className="shrink-0 text-xs text-muted-foreground">
-                (converted)
-              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">(converted)</span>
             )}
           </div>
 
@@ -695,6 +750,25 @@ const DocumentViewerPage = () => {
                 <TooltipContent>Download original</TooltipContent>
               </Tooltip>
             )}
+
+            {/* Right panel toggle — in header so it aligns with left sidebar toggle */}
+            <div className="ml-1 border-l border-border pl-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSidebarOpen(!sidebarOpen)}
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  >
+                    {sidebarOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">
+                  {sidebarOpen ? "Collapse panel" : "Expand panel"}
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         </div>
 
@@ -817,27 +891,6 @@ const DocumentViewerPage = () => {
             {state.type === "video" && (
               <video src={state.url} controls className="max-w-full rounded" />
             )}
-          </div>
-
-          {/* Right sidebar toggle — lives OUTSIDE the sidebar so it's never clipped */}
-          <div className="relative shrink-0 flex items-start pt-0 z-30">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className="rounded-l-md border border-r-0 border-border bg-primary/10 hover:bg-primary/20 text-primary px-0.5 py-3 shadow-sm transition-colors"
-                >
-                  {sidebarOpen ? (
-                    <ChevronRight className="size-3" />
-                  ) : (
-                    <ChevronLeft className="size-3" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="left">
-                {sidebarOpen ? "Collapse panel" : "Expand panel"}
-              </TooltipContent>
-            </Tooltip>
           </div>
 
           {/* Info panel wrapper */}

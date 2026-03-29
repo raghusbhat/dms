@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import { Download, FileText, Upload, Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, X, Trash2 } from "lucide-react";
+import { useEffect, useState, useRef, useCallback, Fragment } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Download, FileText, Folder, FolderOpen, Upload, Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, X, Trash2, FolderInput } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -16,6 +16,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
 import UploadDialog from "@/components/documents/UploadDialog";
+import FolderPickerModal from "@/components/folders/FolderPickerModal";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Document } from "@/types/document";
@@ -82,6 +83,8 @@ function getDateRange(preset: string): { date_from?: string; date_to?: string } 
 
 const DocumentsPage = () => {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const folderIdParam = searchParams.get("folder_id");
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -93,10 +96,18 @@ const DocumentsPage = () => {
   const navigate = useNavigate();
   const pollingRefs = useRef<Map<string, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>(new Map());
 
+  const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
+  const [folderNameMap, setFolderNameMap] = useState<Map<string, string>>(new Map());
+  const [subfolders, setSubfolders] = useState<{ id: string; name: string; document_count: number }[]>([]);
+
   // Delete dialog state
   const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
   const [deleteDocTitle, setDeleteDocTitle] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Move dialog state
+  const [moveDocId, setMoveDocId] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   // Filter states
   const [q, setQ] = useState("");
@@ -119,7 +130,7 @@ const DocumentsPage = () => {
   const fetchDocuments = useCallback((pageNum: number) => {
     setIsLoading(true);
     setError(null);
-    
+
     const params = new URLSearchParams();
     params.set("page", String(pageNum));
     params.set("limit", String(limit));
@@ -127,12 +138,13 @@ const DocumentsPage = () => {
     if (docType && docType !== "all") params.set("document_type", docType);
     if (sensitivity) params.set("sensitivity", sensitivity);
     if (docStatus) params.set("status", docStatus);
+    if (folderIdParam) params.set("folder_id", folderIdParam);
     const { date_from, date_to } = getDateRange(datePreset);
     if (date_from) params.set("date_from", date_from);
     if (date_to) params.set("date_to", date_to);
     params.set("sort_by", sortBy);
     params.set("sort_order", sortOrder);
-    
+
     api
       .get(`/documents?${params.toString()}`)
       .then((res) => {
@@ -149,7 +161,7 @@ const DocumentsPage = () => {
         setError(err instanceof Error ? err.message : "Failed to load documents.");
       })
       .finally(() => setIsLoading(false));
-  }, [limit, debouncedQ, docType, sensitivity, docStatus, datePreset, sortBy, sortOrder]);
+  }, [limit, debouncedQ, docType, sensitivity, docStatus, datePreset, sortBy, sortOrder, folderIdParam]);
 
   useEffect(() => {
     fetchDocuments(1); // eslint-disable-line react-hooks/set-state-in-effect
@@ -162,6 +174,47 @@ const DocumentsPage = () => {
       refs.clear();
     };
   }, [fetchDocuments]);
+
+  // Fetch folders — builds breadcrumb path + flat name map for folder column
+  useEffect(() => {
+    type F = { id: string; name: string; children: F[] };
+    api.get("/folders").then(async (res) => {
+      if (!res.ok) return;
+      const roots: F[] = await res.json();
+      // Flat id→name map for the Folder column
+      const map = new Map<string, string>();
+      const flatten = (nodes: F[]) => { for (const f of nodes) { map.set(f.id, f.name); flatten(f.children); } };
+      flatten(roots);
+      setFolderNameMap(map);
+      // Subfolders to show in main panel (root children or children of current folder)
+      if (!folderIdParam) {
+        setSubfolders(roots.map(f => ({ id: f.id, name: f.name, document_count: f.document_count })));
+        setFolderPath([]);
+        return;
+      }
+      const findNode = (nodes: F[], targetId: string): F | null => {
+        for (const f of nodes) {
+          if (f.id === targetId) return f;
+          const found = findNode(f.children, targetId);
+          if (found) return found;
+        }
+        return null;
+      };
+      const node = findNode(roots, folderIdParam);
+      setSubfolders((node?.children ?? []).map(f => ({ id: f.id, name: f.name, document_count: f.document_count })));
+      // Breadcrumb path
+      const buildPath = (nodes: F[], targetId: string, path: { id: string; name: string }[]): { id: string; name: string }[] | null => {
+        for (const f of nodes) {
+          const next = [...path, { id: f.id, name: f.name }];
+          if (f.id === targetId) return next;
+          const found = buildPath(f.children, targetId, next);
+          if (found) return found;
+        }
+        return null;
+      };
+      setFolderPath(buildPath(roots, folderIdParam, []) ?? []);
+    });
+  }, [folderIdParam]);
 
   const startPolling = (docId: string) => {
     const startTime = Date.now();
@@ -284,9 +337,57 @@ const DocumentsPage = () => {
   return (
     <TooltipProvider>
     <div className="flex flex-col flex-1 min-h-0">
+
       {/* Page header */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-6">
-        <h1 className="text-sm font-semibold text-foreground">Documents</h1>
+        <div className="flex items-center gap-1 overflow-hidden">
+          <button
+            onClick={() => navigate("/documents")}
+            className="flex items-center gap-1 shrink-0 text-xs text-primary/50 hover:text-primary transition-colors"
+          >
+            <FolderOpen className="size-3 shrink-0" />
+            <span className={folderPath.length === 0 ? "font-medium text-primary" : ""}>All Documents</span>
+          </button>
+          {(() => {
+            // Limit to 3 visible segments; collapse middle with "…" when deeper
+            const visible: typeof folderPath =
+              folderPath.length <= 3
+                ? folderPath
+                : [folderPath[0], { id: "__ellipsis__", name: "…" }, ...folderPath.slice(-2)];
+            return visible.map((f, i) => {
+              const isLast = i === visible.length - 1;
+              const isEllipsis = f.id === "__ellipsis__";
+              return (
+                <Fragment key={f.id}>
+                  <ChevronRight className="size-3 shrink-0 text-primary/25" />
+                  {isEllipsis ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-default text-xs text-primary/40 shrink-0 px-0.5">…</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs max-w-xs">
+                        {folderPath.map(f => f.name).join(" › ")}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : isLast ? (
+                    <span className="flex items-center gap-1 text-xs font-medium text-primary truncate">
+                      <Folder className="size-3 shrink-0" />
+                      {f.name}
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => navigate(`/documents?folder_id=${f.id}`)}
+                      className="flex items-center gap-1 shrink-0 text-xs text-primary/50 hover:text-primary transition-colors"
+                    >
+                      <Folder className="size-3" />
+                      {f.name}
+                    </button>
+                  )}
+                </Fragment>
+              );
+            });
+          })()}
+        </div>
         <Button size="sm" onClick={() => setUploadOpen(true)}>
           <Upload className="size-3.5" />
           Upload
@@ -372,7 +473,7 @@ const DocumentsPage = () => {
       </div>
 
       {/* Column header - fixed */}
-      <div className="shrink-0 grid grid-cols-[1fr_160px_120px_100px_140px_40px] items-center gap-4 border-b border-border bg-muted/40 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className={`shrink-0 grid ${!folderIdParam ? "grid-cols-[1fr_130px_160px_120px_100px_140px_40px]" : "grid-cols-[1fr_160px_120px_100px_140px_40px]"} items-center gap-4 border-b border-border bg-muted/40 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground`}>
         <button
           onClick={() => handleSort("title")}
           className="flex items-center text-left hover:text-foreground transition-colors"
@@ -380,6 +481,7 @@ const DocumentsPage = () => {
           Name
           {getSortIcon("title")}
         </button>
+        {!folderIdParam && <span>Folder</span>}
         <span>Type</span>
         <span>Sensitivity</span>
         <span>Status</span>
@@ -407,32 +509,76 @@ const DocumentsPage = () => {
           </div>
         )}
 
-        {!isLoading && !error && documents.length === 0 && (
+        {!isLoading && !error && subfolders.length === 0 && documents.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <FileText className="size-8 text-muted-foreground/40" />
             <p className="mt-3 text-sm font-medium text-foreground">No documents yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Upload your first document to get started.
             </p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => setUploadOpen(true)}>
+            <Button size="sm" className="mt-4" onClick={() => setUploadOpen(true)}>
               <Upload className="size-3.5" />
               Upload document
             </Button>
           </div>
         )}
 
-        {!isLoading && !error && documents.length > 0 && (
+        {!isLoading && !error && (subfolders.length > 0 || documents.length > 0) && (
           <div className="flex flex-col">
+            {/* Folder rows — always at top, same grid as documents */}
+            {subfolders.map((f) => (
+              <div
+                key={f.id}
+                className={`grid ${!folderIdParam ? "grid-cols-[1fr_130px_160px_120px_100px_140px_64px]" : "grid-cols-[1fr_160px_120px_100px_140px_64px]"} items-center gap-4 border-b border-border bg-muted/20 px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors`}
+                onClick={() => navigate(`/documents?folder_id=${f.id}`)}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Folder className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-foreground font-medium">{f.name}</span>
+                  {f.document_count > 0 && (
+                    <span className="rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums px-1.5 py-0.5 min-w-[18px] text-center ml-1">
+                      {f.document_count}
+                    </span>
+                  )}
+                </div>
+                {!folderIdParam && <span className="text-muted-foreground/40 text-xs">—</span>}
+                <span className="text-xs text-muted-foreground/60">Folder</span>
+                <span className="text-muted-foreground/40">—</span>
+                <span className="text-muted-foreground/40">—</span>
+                <span className="text-muted-foreground/40 text-xs">—</span>
+                <span />
+              </div>
+            ))}
+            {/* Document rows */}
             {documents.map((doc) => (
               <div
                 key={doc.id}
-                className="grid grid-cols-[1fr_160px_120px_100px_140px_40px] items-center gap-4 border-b border-border bg-background px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/40 transition-colors"
+                className={`grid ${!folderIdParam ? "grid-cols-[1fr_130px_160px_120px_100px_140px_64px]" : "grid-cols-[1fr_160px_120px_100px_140px_64px]"} items-center gap-4 border-b border-border bg-background px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/40 transition-colors`}
                 onClick={() => navigate(`/documents/${doc.id}`)}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <FileText className="size-4 shrink-0 text-muted-foreground" />
                   <span className="truncate text-foreground font-medium">{doc.title}</span>
                 </div>
+                {!folderIdParam && (
+                  <span className="flex items-center gap-1 min-w-0">
+                    {doc.folder_id ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex items-center gap-1 max-w-full rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground truncate cursor-default">
+                            <Folder className="size-3 shrink-0" />
+                            <span className="truncate">{folderNameMap.get(doc.folder_id) ?? "…"}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-xs">
+                          {folderNameMap.get(doc.folder_id) ?? doc.folder_id}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-xs">—</span>
+                    )}
+                  </span>
+                )}
                 <span className="text-xs">
                   {doc.extraction?.document_type ? (
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md font-medium bg-violet-100 text-violet-900">
@@ -461,6 +607,17 @@ const DocumentsPage = () => {
                   >
                     <Download className="size-3.5" />
                   </a>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setMoveDocId(doc.id); }}
+                        className="flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                      >
+                        <FolderInput className="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Move to folder</TooltipContent>
+                  </Tooltip>
                   {user?.role === "Admin" && (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -586,7 +743,40 @@ const DocumentsPage = () => {
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
         onUploaded={handleUploaded}
+        defaultFolderId={folderIdParam ?? undefined}
       />
+
+      {/* Move to folder dialog */}
+      <FolderPickerModal
+        open={moveDocId !== null}
+        onClose={() => setMoveDocId(null)}
+        title="Move document"
+        confirmLabel="Move here"
+        onSelect={async (folderId, _label) => {
+          if (!moveDocId) return;
+          setMoveError(null);
+          try {
+            const res = await api.patch(`/documents/${moveDocId}/move`, { folder_id: folderId });
+            if (res.ok) {
+              setMoveDocId(null);
+              fetchDocuments(currentPage);
+              window.dispatchEvent(new CustomEvent("dms:folders-changed"));
+            } else {
+              const err = await res.json();
+              setMoveError(err.detail || "Failed to move document.");
+            }
+          } catch {
+            setMoveError("Failed to move document.");
+          }
+        }}
+      />
+
+      {/* Move error display (from FolderPickerModal) */}
+      {moveError && moveDocId !== null && (
+        <div className="fixed bottom-4 right-4 bg-destructive text-destructive-foreground px-4 py-2 rounded-md text-sm shadow-lg">
+          {moveError}
+        </div>
+      )}
     </div>
     </TooltipProvider>
   );

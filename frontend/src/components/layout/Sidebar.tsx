@@ -1,5 +1,7 @@
-import { useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
+import { useState } from "react";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight, LogOut, FolderOpen } from "lucide-react";
+import FolderPanel from "@/components/folders/FolderPanel";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +30,11 @@ interface SidebarProps {
 const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const folderIdParam = searchParams.get("folder_id");
+  const isDocumentsPage = location.pathname === "/documents";
+  const [docsExpanded, setDocsExpanded] = useState(true);
 
   const handleLogout = async () => {
     await logout();
@@ -44,7 +51,7 @@ const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
         <TooltipTrigger asChild>
           <button
             onClick={onToggle}
-            className="absolute right-0 top-14 translate-x-full z-30 rounded-r-md border border-l-0 border-border bg-primary/10 hover:bg-primary/20 text-primary px-0.5 py-3 shadow-sm transition-colors"
+            className="absolute right-0 top-4 translate-x-full z-30 rounded-r-md border border-l-0 border-border bg-primary/10 hover:bg-primary/20 text-primary px-0.5 py-3 shadow-sm transition-colors"
           >
             {collapsed ? <ChevronRight className="size-3" /> : <ChevronLeft className="size-3" />}
           </button>
@@ -63,9 +70,49 @@ const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
       </div>
 
       {/* Primary nav */}
-      <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2 overflow-y-auto">
+      <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2 overflow-y-auto min-h-0">
         {PRIMARY_NAV.map((item) => {
           if (item.label === "Approvals" && user?.role === "uploader") return null;
+
+          // Documents: always render with chevron; expand tree only when on /documents
+          if (item.label === "Documents" && !collapsed) {
+            return (
+              <div key={item.path}>
+                {/* Documents row */}
+                <div
+                  className={`flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm select-none cursor-pointer transition-colors ${
+                    isDocumentsPage
+                      ? "bg-accent font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                  onClick={() => {
+                    if (isDocumentsPage) {
+                      setDocsExpanded(v => !v);
+                    } else {
+                      navigate("/documents");
+                    }
+                  }}
+                >
+                  <FolderOpen className="size-4 shrink-0" />
+                  <span className="flex-1">Documents</span>
+                  <ChevronRight
+                    className={`size-3.5 text-muted-foreground transition-transform duration-200 ${isDocumentsPage && docsExpanded ? "rotate-90" : ""}`}
+                  />
+                </div>
+                {/* Folder tree — only on /documents, animated open/close */}
+                {isDocumentsPage && (
+                  <div className={`grid transition-[grid-template-rows] duration-200 ease-in-out ${docsExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                    <div className="overflow-hidden">
+                      <div className="ml-3.5 border-l border-border/60 mt-0.5">
+                        <FolderPanel selectedFolderId={folderIdParam} hideHeader />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           return <SidebarNavItem key={item.path} {...item} collapsed={collapsed} />;
         })}
       </nav>

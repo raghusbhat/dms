@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing import Literal
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ from app.conversion.libreoffice import (
     needs_conversion,
 )
 from app.database import get_db
-from app.models.document import Document, DocumentVersion
+from app.models.document import Document, DocumentVersion, Folder
 from app.models.extraction import DocumentExtraction
 from app.models.user import User
 from app.services.search import get_all_ids_for_query
@@ -91,9 +91,14 @@ class AskResponse(BaseModel):
     question: str
 
 
+class DocumentMoveRequest(BaseModel):
+    folder_id: str | None  # None = move to root
+
+
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile,
+    folder_id: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DocumentOut:
@@ -120,10 +125,22 @@ async def upload_document(
     file_id = str(uuid.uuid4())
     storage_path = await storage.save(file_id, data)
 
+    # Validate folder if provided
+    folder_uuid: uuid.UUID | None = None
+    if folder_id:
+        try:
+            folder_uuid = uuid.UUID(folder_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid folder_id.")
+        folder_exists = await db.execute(select(Folder).where(Folder.id == folder_uuid))
+        if not folder_exists.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Folder not found.")
+
     # Create document record
     doc = Document(
         title=file.filename,
         created_by=current_user.id,
+        folder_id=folder_uuid,
     )
     db.add(doc)
     await db.flush()  # get doc.id
@@ -158,6 +175,7 @@ async def list_documents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     q: str | None = Query(None),
+    folder_id: str | None = Query(None, description="Filter by folder (omit for all, 'root' for unfoldered)"),
     document_type: str | None = Query(None),
     sensitivity: str | None = Query(None),
     status: str | None = Query(None),
@@ -207,6 +225,14 @@ async def list_documents(
 
     # ── Standard SQL query (no search term) ──────────────────────────────────
     def _apply_filters(q_obj):
+        if folder_id == "root":
+            q_obj = q_obj.where(Document.folder_id.is_(None))
+        elif folder_id:
+            try:
+                fid = uuid.UUID(folder_id)
+                q_obj = q_obj.where(Document.folder_id == fid)
+            except ValueError:
+                pass
         if status:
             q_obj = q_obj.where(Document.status == status)
         if date_from:
@@ -323,6 +349,34 @@ async def download_document(
             "Content-Length": str(version.file_size),
         },
     )
+
+
+@router.patch("/{document_id}/move", response_model=DocumentOut)
+async def move_document(
+    document_id: str,
+    body: DocumentMoveRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentOut:
+    doc = await _get_doc_or_404(db, document_id)
+
+    if body.folder_id is None:
+        doc.folder_id = None
+    else:
+        try:
+            fid = uuid.UUID(body.folder_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid folder_id.")
+        folder_exists = await db.execute(select(Folder).where(Folder.id == fid))
+        if not folder_exists.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Folder not found.")
+        doc.folder_id = fid
+
+    await db.commit()
+    await db.refresh(doc)
+    version = await _get_current_version(db, doc)
+    extraction = await _get_extraction(db, doc)
+    return _doc_out(doc, version, extraction)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -459,16 +513,11 @@ async def ask_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AskResponse:
-    doc_result = await db.execute(
-        select(Document).where(Document.id == uuid.UUID(document_id))
-    )
-    doc = doc_result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = await _get_doc_or_404(db, document_id)
 
     answer = await asyncio.to_thread(
         answer_question,
-        document_id,
+        str(doc.id),
         body.question,
         doc.title,
     )

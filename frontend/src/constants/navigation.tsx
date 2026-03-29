@@ -9,8 +9,8 @@ export interface NavItem {
 
 export const PRIMARY_NAV: NavItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { label: "Documents", path: "/documents", icon: FolderOpen },
   { label: "Approvals", path: "/tasks", icon: CheckSquare },
+  { label: "Documents", path: "/documents", icon: FolderOpen },
 ];
 
 export const SECONDARY_NAV: NavItem[] = [

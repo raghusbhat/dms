@@ -13,7 +13,10 @@ const AppLayout = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+      />
       <main className={`flex flex-1 flex-col min-h-0 transition-all duration-200 ${sidebarCollapsed ? "ml-14" : "ml-60"}`}>
         <Outlet />
       </main>

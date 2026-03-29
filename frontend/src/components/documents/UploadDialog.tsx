@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from "react";
-import { Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Upload, Folder } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
+import { api } from "@/lib/api";
+import FolderPickerModal from "@/components/folders/FolderPickerModal";
 import type { Document } from "@/types/document";
 
 const BASE_URL = "http://localhost:8000";
@@ -18,6 +20,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onUploaded: (doc: Document) => void;
+  defaultFolderId?: string | null;
 }
 
 type UploadState =
@@ -26,10 +29,18 @@ type UploadState =
   | { stage: "uploading"; file: File; progress: number }
   | { stage: "error"; file: File; message: string };
 
-const UploadDialog = ({ open, onClose, onUploaded }: Props) => {
+const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId }: Props) => {
   const [state, setState] = useState<UploadState>({ stage: "idle" });
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(defaultFolderId ?? null);
+  const [selectedFolderLabel, setSelectedFolderLabel] = useState<string | null>(null);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setSelectedFolder(defaultFolderId ?? null);
+    setSelectedFolderLabel(null);
+  }, [open, defaultFolderId]);
 
   const selectFile = (file: File) => {
     setState({ stage: "selected", file });
@@ -50,6 +61,9 @@ const UploadDialog = ({ open, onClose, onUploaded }: Props) => {
 
     const formData = new FormData();
     formData.append("file", file);
+    if (selectedFolder) {
+      formData.append("folder_id", selectedFolder);
+    }
 
     return new Promise<void>((resolve) => {
       const xhr = new XMLHttpRequest();
@@ -121,6 +135,32 @@ const UploadDialog = ({ open, onClose, onUploaded }: Props) => {
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          {/* Folder selector */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground">Folder (optional)</label>
+            <button
+              type="button"
+              onClick={() => setFolderPickerOpen(true)}
+              className="flex h-8 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-left hover:bg-accent/50 transition-colors"
+            >
+              <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className={selectedFolderLabel ? "text-foreground truncate" : "text-muted-foreground"}>
+                {selectedFolderLabel ?? "No folder — root"}
+              </span>
+            </button>
+          </div>
+
+          <FolderPickerModal
+            open={folderPickerOpen}
+            onClose={() => setFolderPickerOpen(false)}
+            title="Choose upload folder"
+            confirmLabel="Select"
+            onSelect={(folderId, folderLabel) => {
+              setSelectedFolder(folderId);
+              setSelectedFolderLabel(folderLabel);
+            }}
+          />
+
           {/* Drop zone — shown when idle or after error */}
           {(state.stage === "idle" || state.stage === "error") && (
             <button
