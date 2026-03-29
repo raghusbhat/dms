@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ class FolderOut(BaseModel):
     name: str
     parent_id: str | None
     document_count: int
+    created_at: datetime
     children: list["FolderOut"]
 
 
@@ -77,6 +79,7 @@ def _build_tree(
                 name=f.name,
                 parent_id=str(f.parent_id) if f.parent_id else None,
                 document_count=doc_counts.get(str(f.id), 0),
+                created_at=f.created_at,
                 children=children,
             ))
     return result
@@ -140,6 +143,7 @@ async def create_folder(
         name=folder.name,
         parent_id=str(folder.parent_id) if folder.parent_id else None,
         document_count=0,
+        created_at=folder.created_at,
         children=[],
     )
 
@@ -184,6 +188,7 @@ async def rename_folder(
         name=folder.name,
         parent_id=str(folder.parent_id) if folder.parent_id else None,
         document_count=doc_counts.get(str(folder.id), 0),
+        created_at=folder.created_at,
         children=[],
     )
 

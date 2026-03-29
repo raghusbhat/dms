@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, assertOk } from "@/lib/api";
+import PageLoader from "@/components/ui/PageLoader";
 
 interface Role {
   id: string;
@@ -236,9 +237,7 @@ const AdminPage = () => {
         <div className="flex h-14 items-center justify-between border-b border-border px-6">
           <h1 className="text-sm font-semibold text-foreground">Admin</h1>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
+        <PageLoader />
       </div>
     );
   }

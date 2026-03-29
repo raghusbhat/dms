@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
+import PageLoader from "@/components/ui/PageLoader";
 import type { Document, WorkflowTask } from "@/types/document";
 
 // ── Badge helpers ─────────────────────────────────────────────────────────────
@@ -108,7 +109,7 @@ const ReviewerDashboard = () => {
   }, []);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground px-6 py-8">Loading...</p>;
+    return <PageLoader />;
   }
 
   const visible = tasks.slice(0, 10);
@@ -187,7 +188,7 @@ const AdminDashboard = () => {
   }, []);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground px-6 py-8">Loading...</p>;
+    return <PageLoader />;
   }
 
   const failed = documents.filter((d) => d.status === "processing_failed");

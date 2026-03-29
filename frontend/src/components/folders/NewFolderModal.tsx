@@ -55,6 +55,7 @@ const NewFolderModal = ({ open, onClose, onCreated, defaultParentId }: NewFolder
       const res = await api.post("/folders", body);
       if (res.ok) {
         onCreated();
+        window.dispatchEvent(new CustomEvent("dms:folders-changed"));
         onClose();
       } else {
         const err = await res.json();

@@ -4,7 +4,27 @@ export interface DocumentVersion {
   file_name: string;
   file_size: number;
   mime_type: string;
+  checksum: string | null;
+  change_note: string | null;
+  uploaded_by_name: string | null;
   created_at: string;
+}
+
+export interface VersionHistoryItem {
+  id: string;
+  version_number: number;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  checksum: string | null;
+  change_note: string | null;
+  uploaded_by_name: string | null;
+  created_at: string;
+}
+
+export interface VersionHistoryOut {
+  versions: VersionHistoryItem[];
+  current_version_id: string | null;
 }
 
 export interface DocumentExtraction {
@@ -39,4 +59,18 @@ export interface WorkflowTask {
   status: string;
   comment: string | null;
   created_at: string;
+}
+
+export interface TrashItem {
+  id: string;
+  title: string;
+  status: string;
+  folder_id: string | null;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+  deleted_at: string;
+  deleted_by: string | null;
+  deleted_by_name: string | null;
+  latest_version: DocumentVersion | null;
 }

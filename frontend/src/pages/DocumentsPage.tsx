@@ -14,9 +14,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useAuth } from "@/contexts/AuthContext";
 import UploadDialog from "@/components/documents/UploadDialog";
 import FolderPickerModal from "@/components/folders/FolderPickerModal";
+import PageLoader from "@/components/ui/PageLoader";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Document } from "@/types/document";
@@ -82,7 +82,6 @@ function getDateRange(preset: string): { date_from?: string; date_to?: string } 
 }
 
 const DocumentsPage = () => {
-  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const folderIdParam = searchParams.get("folder_id");
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -116,6 +115,7 @@ const DocumentsPage = () => {
   const [sensitivity, setSensitivity] = useState("");
   const [docStatus, setDocStatus] = useState("");
   const [datePreset, setDatePreset] = useState("all");
+  const [rowFilter, setRowFilter] = useState<"all" | "folders" | "files">("all");
 
   // Sort states
   const [sortBy, setSortBy] = useState<SortField>("updated_at");
@@ -176,8 +176,8 @@ const DocumentsPage = () => {
   }, [fetchDocuments]);
 
   // Fetch folders — builds breadcrumb path + flat name map for folder column
-  useEffect(() => {
-    type F = { id: string; name: string; children: F[] };
+  const fetchFolderData = useCallback(() => {
+    type F = { id: string; name: string; children: F[]; document_count?: number; created_at?: string };
     api.get("/folders").then(async (res) => {
       if (!res.ok) return;
       const roots: F[] = await res.json();
@@ -188,7 +188,12 @@ const DocumentsPage = () => {
       setFolderNameMap(map);
       // Subfolders to show in main panel (root children or children of current folder)
       if (!folderIdParam) {
-        setSubfolders(roots.map(f => ({ id: f.id, name: f.name, document_count: f.document_count })));
+        // Sort by created_at desc (newest first)
+        const sorted = [...roots].sort((a, b) => {
+          if (!a.created_at || !b.created_at) return 0;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+        setSubfolders(sorted.map(f => ({ id: f.id, name: f.name, document_count: f.document_count ?? 0 })));
         setFolderPath([]);
         return;
       }
@@ -201,7 +206,12 @@ const DocumentsPage = () => {
         return null;
       };
       const node = findNode(roots, folderIdParam);
-      setSubfolders((node?.children ?? []).map(f => ({ id: f.id, name: f.name, document_count: f.document_count })));
+      const children = node?.children ?? [];
+      const sortedChildren = [...children].sort((a, b) => {
+        if (!a.created_at || !b.created_at) return 0;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      setSubfolders(sortedChildren.map(f => ({ id: f.id, name: f.name, document_count: f.document_count ?? 0 })));
       // Breadcrumb path
       const buildPath = (nodes: F[], targetId: string, path: { id: string; name: string }[]): { id: string; name: string }[] | null => {
         for (const f of nodes) {
@@ -215,6 +225,16 @@ const DocumentsPage = () => {
       setFolderPath(buildPath(roots, folderIdParam, []) ?? []);
     });
   }, [folderIdParam]);
+
+  useEffect(() => {
+    setRowFilter("all");
+    fetchFolderData();
+  }, [fetchFolderData]);
+
+  useEffect(() => {
+    window.addEventListener("dms:folders-changed", fetchFolderData);
+    return () => window.removeEventListener("dms:folders-changed", fetchFolderData);
+  }, [fetchFolderData]);
 
   const startPolling = (docId: string) => {
     const startTime = Date.now();
@@ -259,6 +279,7 @@ const DocumentsPage = () => {
 
   const handleUploaded = (doc: Document) => {
     fetchDocuments(1);
+    window.dispatchEvent(new CustomEvent("dms:folders-changed"));
     if (doc.status === "uploaded" || doc.status === "processing") {
       startPolling(doc.id);
     }
@@ -464,11 +485,30 @@ const DocumentsPage = () => {
         {hasActiveFilters && (
           <button
             onClick={clearFilters}
-            className="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
           >
             <X className="size-3" />
             Clear filters
           </button>
+        )}
+
+        {/* Row filter toggle */}
+        {subfolders.length > 0 && (
+          <div className="ml-auto flex items-center rounded-md border border-border overflow-hidden">
+            {(["all", "folders", "files"] as const).map((opt) => (
+              <button
+                key={opt}
+                onClick={() => setRowFilter(opt)}
+                className={`px-3 py-1 text-xs capitalize transition-colors border-r border-border last:border-r-0 ${
+                  rowFilter === opt
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                {opt === "all" ? "All" : opt === "folders" ? "Folders" : "Files"}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -498,9 +538,7 @@ const DocumentsPage = () => {
       {/* Scrollable rows */}
       <div className="flex-1 overflow-y-auto">
         {isLoading && (
-          <div className="flex items-center justify-center py-10">
-            <p className="text-sm text-muted-foreground">Loading documents...</p>
-          </div>
+          <PageLoader message="Loading documents..." />
         )}
 
         {error && (
@@ -523,10 +561,22 @@ const DocumentsPage = () => {
           </div>
         )}
 
+        {/* Filtered empty states */}
+        {!isLoading && !error && (subfolders.length > 0 || documents.length > 0) && (
+          (rowFilter === "folders" && subfolders.length === 0) ||
+          (rowFilter === "files" && documents.length === 0)
+        ) && (
+          <div className="flex items-center justify-center py-10">
+            <p className="text-sm text-muted-foreground">
+              {rowFilter === "folders" ? "No subfolders in this location." : "No files in this location."}
+            </p>
+          </div>
+        )}
+
         {!isLoading && !error && (subfolders.length > 0 || documents.length > 0) && (
           <div className="flex flex-col">
-            {/* Folder rows — always at top, same grid as documents */}
-            {subfolders.map((f) => (
+            {/* Folder rows — hidden when rowFilter === "files" */}
+            {rowFilter !== "files" && subfolders.map((f) => (
               <div
                 key={f.id}
                 className={`grid ${!folderIdParam ? "grid-cols-[1fr_130px_160px_120px_100px_140px_64px]" : "grid-cols-[1fr_160px_120px_100px_140px_64px]"} items-center gap-4 border-b border-border bg-muted/20 px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors`}
@@ -536,7 +586,7 @@ const DocumentsPage = () => {
                   <Folder className="size-4 shrink-0 text-muted-foreground" />
                   <span className="truncate text-foreground font-medium">{f.name}</span>
                   {f.document_count > 0 && (
-                    <span className="rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums px-1.5 py-0.5 min-w-[18px] text-center ml-1">
+                    <span className="rounded-full bg-slate-200 text-slate-800 border border-slate-300 text-[10px] px-1.5 py-0.5 font-semibold tabular-nums min-w-[18px] text-center ml-1">
                       {f.document_count}
                     </span>
                   )}
@@ -549,8 +599,8 @@ const DocumentsPage = () => {
                 <span />
               </div>
             ))}
-            {/* Document rows */}
-            {documents.map((doc) => (
+            {/* Document rows — hidden when rowFilter === "folders" */}
+            {rowFilter !== "folders" && documents.map((doc) => (
               <div
                 key={doc.id}
                 className={`grid ${!folderIdParam ? "grid-cols-[1fr_130px_160px_120px_100px_140px_64px]" : "grid-cols-[1fr_160px_120px_100px_140px_64px]"} items-center gap-4 border-b border-border bg-background px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/40 transition-colors`}
@@ -559,6 +609,11 @@ const DocumentsPage = () => {
                 <div className="flex items-center gap-2.5 min-w-0">
                   <FileText className="size-4 shrink-0 text-muted-foreground" />
                   <span className="truncate text-foreground font-medium">{doc.title}</span>
+                  {doc.latest_version && doc.latest_version.version_number > 1 && (
+                    <span className="rounded-full bg-slate-200 text-slate-800 border border-slate-300 text-[10px] px-1.5 py-0.5 font-mono font-semibold shrink-0">
+                      v{doc.latest_version.version_number}
+                    </span>
+                  )}
                 </div>
                 {!folderIdParam && (
                   <span className="flex items-center gap-1 min-w-0">
@@ -618,24 +673,22 @@ const DocumentsPage = () => {
                     </TooltipTrigger>
                     <TooltipContent>Move to folder</TooltipContent>
                   </Tooltip>
-                  {user?.role === "Admin" && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteDocId(doc.id);
-                            setDeleteDocTitle(doc.title);
-                          }}
-                          className="flex items-center justify-center rounded p-1 text-destructive hover:bg-destructive/10 transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>Delete document</TooltipContent>
-                    </Tooltip>
-                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteDocId(doc.id);
+                          setDeleteDocTitle(doc.title);
+                        }}
+                        className="flex items-center justify-center rounded p-1 text-destructive hover:bg-destructive/10 transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Delete document</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             ))}
@@ -744,6 +797,7 @@ const DocumentsPage = () => {
         onClose={() => setUploadOpen(false)}
         onUploaded={handleUploaded}
         defaultFolderId={folderIdParam ?? undefined}
+        defaultFolderLabel={folderPath.length > 0 ? folderPath[folderPath.length - 1].name : null}
       />
 
       {/* Move to folder dialog */}

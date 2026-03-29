@@ -9,6 +9,7 @@ import DocumentsPage from "@/pages/DocumentsPage";
 import DocumentViewerPage from "@/pages/DocumentViewerPage";
 import TasksPage from "@/pages/TasksPage";
 import AdminPage from "@/pages/AdminPage";
+import TrashPage from "@/pages/TrashPage";
 
 const App = () => {
   return (
@@ -27,6 +28,7 @@ const App = () => {
               </Route>
               <Route element={<RequireRole roles={["Admin"]} />}>
                 <Route path="/admin" element={<AdminPage />} />
+                <Route path="/trash" element={<TrashPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

@@ -57,6 +57,12 @@ class Document(Base, TimestampMixin):
         "metadata", JSONB, server_default="{}", nullable=False
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="uploaded")
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     folder: Mapped["Folder | None"] = relationship("Folder", back_populates="documents")
     versions: Mapped[list["DocumentVersion"]] = relationship(
@@ -102,6 +108,8 @@ class DocumentVersion(Base):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(127), nullable=False)
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    change_note: Mapped[str | None] = mapped_column(Text(), nullable=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False
     )

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   Download,
   RotateCw,
+  RotateCcw,
   ChevronRight,
   ChevronLeft,
   Copy,
@@ -17,6 +18,8 @@ import {
   Folder,
   FolderOpen,
   FileText as FileTextIcon,
+  Upload,
+  Trash2,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -45,10 +48,23 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import PageLoader from "@/components/ui/PageLoader";
 import { api, assertOk } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
-import type { Document as DmsDocument, WorkflowTask } from "@/types/document";
+import type { Document as DmsDocument, WorkflowTask, VersionHistoryItem, VersionHistoryOut } from "@/types/document";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -119,6 +135,26 @@ const DocumentViewerPage = () => {
   });
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
+  // Version history states
+  const [versions, setVersions] = useState<VersionHistoryItem[]>([]);
+  const [versionsCurrentId, setVersionsCurrentId] = useState<string | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [isRestoringVersion, setIsRestoringVersion] = useState(false);
+  const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Upload version dialog states
+  const [verFile, setVerFile] = useState<File | null>(null);
+  const [verNote, setVerNote] = useState("");
+  const [verProgress, setVerProgress] = useState(0);
+  const [verError, setVerError] = useState<string | null>(null);
+  const verInputRef = useRef<HTMLInputElement>(null);
+
+  // Previewing version state
+  const [previewingVersion, setPreviewingVersion] = useState<VersionHistoryItem | null>(null);
+  const [showVersionBanner, setShowVersionBanner] = useState(true);
+
   const toggleEntityGroup = (label: string) => {
     setExpandedEntityGroups((prev) => {
       const next = new Set(prev);
@@ -187,6 +223,99 @@ const DocumentViewerPage = () => {
     }
   };
 
+  const fetchVersions = async () => {
+    if (!id) return;
+    setVersionsLoading(true);
+    try {
+      const res = await api.get(`/documents/${id}/versions`);
+      if (res.ok) {
+        const data: VersionHistoryOut = await res.json();
+        setVersions(data.versions);
+        setVersionsCurrentId(data.current_version_id);
+      }
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const restoreVersion = async (versionId: string) => {
+    if (!id) return;
+    setIsRestoringVersion(true);
+    try {
+      const res = await api.patch(`/documents/${id}/versions/${versionId}/restore`);
+      if (res.ok) {
+        const updated: DmsDocument = await res.json();
+        setDoc(updated);
+        setVersionsCurrentId(versionId);
+        setPreviewingVersion(null);
+        setShowVersionBanner(true);
+      }
+    } finally {
+      setIsRestoringVersion(false);
+    }
+  };
+
+  const uploadVersion = () => {
+    if (!verFile || !id) return;
+    setVerProgress(1);
+    setVerError(null);
+
+    const formData = new FormData();
+    formData.append("file", verFile);
+    if (verNote.trim()) formData.append("change_note", verNote.trim());
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setVerProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 201) {
+        try {
+          const updated: DmsDocument = JSON.parse(xhr.responseText);
+          setDoc(updated);
+          fetchVersions();
+          setUploadVersionOpen(false);
+          setVerFile(null);
+          setVerNote("");
+          setVerProgress(0);
+        } catch {
+          setVerError("Upload succeeded but response was unexpected.");
+          setVerProgress(0);
+        }
+      } else if (xhr.status === 409) {
+        setVerError("This file is identical to an existing version of this document.");
+        setVerProgress(0);
+      } else {
+        let msg = "Upload failed. Please try again.";
+        try {
+          const err = JSON.parse(xhr.responseText);
+          if (typeof err.detail === "string") msg = err.detail;
+        } catch { /* ignore */ }
+        setVerError(msg);
+        setVerProgress(0);
+      }
+    };
+    xhr.onerror = () => { setVerError("Network error. Check your connection."); setVerProgress(0); };
+    xhr.withCredentials = true;
+    xhr.timeout = 10 * 60 * 1000;
+    xhr.open("POST", `http://localhost:8000/documents/${id}/versions`);
+    xhr.send(formData);
+  };
+
+  const handleDelete = async () => {
+    if (!doc) return;
+    setIsDeleting(true);
+    try {
+      const res = await api.delete(`/documents/${doc.id}`);
+      if (res.ok) {
+        navigate("/documents");
+      }
+    } finally {
+      setIsDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem("viewer_sidebar_collapsed", String(!sidebarOpen));
   }, [sidebarOpen]);
@@ -218,7 +347,10 @@ const DocumentViewerPage = () => {
         if (!res.ok) throw new Error("Document not found.");
         return res.json();
       })
-      .then((data: DmsDocument) => setDoc(data))
+      .then((data: DmsDocument) => {
+        setDoc(data);
+        fetchVersions();
+      })
       .catch((err: unknown) => {
         setFetchError(
           err instanceof Error ? err.message : "Failed to load document.",
@@ -247,14 +379,18 @@ const DocumentViewerPage = () => {
 
   useEffect(() => {
     if (!doc) return;
-    if (!doc.latest_version) {
+    const version = previewingVersion ?? doc.latest_version;
+    if (!version) {
       setState({ type: "unsupported" });
       return;
     }
     setState({ type: "loading" });
+    setShowVersionBanner(true);
 
-    const mime = doc.latest_version.mime_type;
-    const previewUrl = `${BASE_URL}/documents/${doc.id}/preview`;
+    const mime = version.mime_type;
+    const previewUrl = previewingVersion
+      ? `${BASE_URL}/documents/${doc.id}/versions/${previewingVersion.id}/preview`
+      : `${BASE_URL}/documents/${doc.id}/preview`;
 
     if (mime === PDF_TYPE || CONVERTIBLE_TYPES.includes(mime)) {
       setState({
@@ -271,7 +407,7 @@ const DocumentViewerPage = () => {
     } else {
       setState({ type: "unsupported" });
     }
-  }, [doc]);
+  }, [doc?.current_version_id, previewingVersion?.id]);
 
   const viewerRef = useRef<HTMLDivElement>(null);
   const pdfOptions = useMemo(() => ({ withCredentials: true }), []);
@@ -333,7 +469,7 @@ const DocumentViewerPage = () => {
     if (allLabels.length === 0) {
       return (
         <div className="px-4 pb-4">
-          <p className="text-xs text-muted-foreground">No entities found.</p>
+          <p className="text-xs text-slate-500">No entities found.</p>
         </div>
       );
     }
@@ -352,11 +488,11 @@ const DocumentViewerPage = () => {
             <div key={label}>
               {/* Group heading — visually anchored, clearly a label not a value */}
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-700">
                   {getEntityGroupLabel(label)}
                 </span>
-                <span className="h-px flex-1 bg-border" />
-                <span className="text-[10px] tabular-nums text-muted-foreground/60">
+                <span className="h-px flex-1 bg-slate-200" />
+                <span className="text-[10px] font-semibold tabular-nums text-slate-600">
                   {texts.length}
                 </span>
               </div>
@@ -365,7 +501,7 @@ const DocumentViewerPage = () => {
                 {displayTexts.map((text, i) => (
                   <span
                     key={i}
-                    className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-[11px] font-medium text-foreground leading-none"
+                    className="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-800 border border-slate-200"
                   >
                     {text}
                   </span>
@@ -373,7 +509,7 @@ const DocumentViewerPage = () => {
                 {remaining > 0 && !isExpanded && (
                   <button
                     onClick={() => toggleEntityGroup(label)}
-                    className="inline-flex items-center rounded-md bg-muted/60 border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    className="inline-flex items-center rounded-md bg-slate-50 border border-dashed border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors"
                   >
                     +{remaining} more
                   </button>
@@ -381,7 +517,7 @@ const DocumentViewerPage = () => {
                 {isExpanded && texts.length > ENTITY_PREVIEW_COUNT && (
                   <button
                     onClick={() => toggleEntityGroup(label)}
-                    className="inline-flex items-center rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                    className="inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 transition-colors"
                   >
                     Show less
                   </button>
@@ -741,7 +877,9 @@ const DocumentViewerPage = () => {
             {doc && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <a href={`${BASE_URL}/documents/${doc.id}/download`} download>
+                  <a href={previewingVersion
+                    ? `${BASE_URL}/documents/${doc.id}/versions/${previewingVersion.id}/download`
+                    : `${BASE_URL}/documents/${doc.id}/download`} download>
                     <Button variant="ghost" size="icon">
                       <Download className="size-4" />
                     </Button>
@@ -751,15 +889,42 @@ const DocumentViewerPage = () => {
               </Tooltip>
             )}
 
-            {/* Right panel toggle — in header so it aligns with left sidebar toggle */}
-            <div className="ml-1 border-l border-border pl-1">
+            {doc && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" onClick={() => setUploadVersionOpen(true)}>
+                    <Upload className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Upload new version</TooltipContent>
+              </Tooltip>
+            )}
+
+            {doc && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
+                    className="text-destructive hover:bg-destructive/10"
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Move to trash</TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* Right panel toggle — in header so it aligns with left sidebar toggle */}
+            <div className="ml-1 border-l border-border pl-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
                     onClick={() => setSidebarOpen(!sidebarOpen)}
-                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    className="h-7 w-7 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border-slate-300"
                   >
                     {sidebarOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
                   </Button>
@@ -777,8 +942,40 @@ const DocumentViewerPage = () => {
           {/* Viewer */}
           <div
             ref={viewerRef}
-            className="flex-1 min-w-0 overflow-x-auto overflow-y-auto bg-muted/20 p-6 flex flex-col items-center"
+            className="flex-1 min-w-0 overflow-x-auto overflow-y-auto bg-muted/20 p-6 flex flex-col items-center relative"
           >
+            {previewingVersion && previewingVersion.id !== versionsCurrentId && showVersionBanner && (
+              <div className="absolute top-4 left-0 right-0 z-10 mx-auto w-full max-w-md px-4">
+                <div className="bg-primary/10 backdrop-blur-sm rounded-lg shadow-md px-3 py-2.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-center h-5 w-5 rounded-full bg-primary/20 shrink-0">
+                      <span className="text-primary font-bold text-[10px]">!</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-slate-900 text-xs font-semibold">Previewing version {previewingVersion.version_number}</span>
+                      <span className="text-slate-500 text-[10px]">This is an older version</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-6 text-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
+                      onClick={() => setPreviewingVersion(null)}
+                    >
+                      View latest
+                    </Button>
+                    <button
+                      onClick={() => setShowVersionBanner(false)}
+                      className="p-1 rounded hover:bg-primary/10 text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+                      title="Dismiss"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {fetchError && (
               <div className="mt-20 flex flex-col items-center gap-3 text-center">
                 <p className="text-sm text-destructive">{fetchError}</p>
@@ -793,9 +990,7 @@ const DocumentViewerPage = () => {
             )}
 
             {!fetchError && state.type === "loading" && (
-              <p className="mt-20 text-sm text-muted-foreground">
-                Loading preview...
-              </p>
+              <PageLoader message="Loading preview..." />
             )}
 
             {state.type === "error" && (
@@ -1028,7 +1223,7 @@ const DocumentViewerPage = () => {
                           {(doc.tags ?? []).map((tag) => (
                             <span
                               key={tag}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground border border-border"
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-800 border border-slate-200"
                             >
                               {tag}
                               {canEdit && (
@@ -1110,7 +1305,7 @@ const DocumentViewerPage = () => {
                         {/* Confidence */}
                         {doc.extraction.type_confidence && (
                           <div className="mt-2">
-                            <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-700 px-2.5 py-0.5 text-[11px] font-medium tabular-nums">
+                            <span className="inline-flex items-center rounded-full bg-slate-200 text-slate-900 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums border border-slate-300">
                               {Math.round(doc.extraction.type_confidence * 100)}
                               % confidence
                             </span>
@@ -1121,14 +1316,14 @@ const DocumentViewerPage = () => {
                         {doc.extraction.summary && (
                           <div className="mt-3">
                             <div className="flex items-center justify-between mb-1.5">
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-700">
                                 Summary
                               </p>
                               <button
                                 onClick={() =>
                                   copySummary(doc.extraction!.summary!)
                                 }
-                                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                                className="flex items-center gap-1 text-[10px] font-medium text-slate-600 hover:text-slate-900 transition-colors"
                                 title="Copy summary"
                               >
                                 {copiedSummary ? (
@@ -1139,9 +1334,9 @@ const DocumentViewerPage = () => {
                                 {copiedSummary ? "Copied" : "Copy"}
                               </button>
                             </div>
-                            <div className="rounded-md bg-white/70 dark:bg-white/5 border border-border/60 px-3 py-2.5">
+                            <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2.5">
                               <p
-                                className={`text-xs text-foreground leading-relaxed ${!showFullSummary ? "line-clamp-4" : ""}`}
+                                className={`text-xs text-slate-900 leading-relaxed ${!showFullSummary ? "line-clamp-4" : ""}`}
                               >
                                 {doc.extraction.summary}
                               </p>
@@ -1149,7 +1344,7 @@ const DocumentViewerPage = () => {
                                 onClick={() =>
                                   setShowFullSummary(!showFullSummary)
                                 }
-                                className="mt-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+                                className="mt-1.5 text-[11px] font-medium text-slate-600 hover:text-slate-900"
                               >
                                 {showFullSummary ? "Show less" : "Show more"}
                               </button>
@@ -1162,7 +1357,7 @@ const DocumentViewerPage = () => {
                           (doc.extraction.key_fields.tags as string[]).length >
                             0 && (
                             <div className="mt-3">
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
                                 Tags
                               </p>
                               <div className="flex flex-wrap gap-1">
@@ -1171,7 +1366,7 @@ const DocumentViewerPage = () => {
                                 ).map((tag, i) => (
                                   <span
                                     key={i}
-                                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] bg-muted text-muted-foreground"
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-800 border border-slate-200"
                                   >
                                     {tag}
                                   </span>
@@ -1195,44 +1390,51 @@ const DocumentViewerPage = () => {
 
                 {/* Section 2: File Details */}
                 <Collapsible defaultOpen>
-                  <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2.5 hover:bg-muted/40 transition-colors">
+                  <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2.5 hover:bg-slate-50 transition-colors">
                     <ChevronRight className="size-3 transition-transform [[data-state=open]_&]:rotate-90" />
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">
                       File Details
                     </span>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     {doc?.latest_version && (
-                      <div className="px-4 pb-4 mt-2 flex flex-col gap-3">
+                      <div className="px-4 pb-4 mt-3 flex flex-col gap-3">
+                        {/* File name */}
                         <div>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
                             File name
                           </p>
-                          <p className="text-xs text-foreground font-medium break-all">
+                          <p className="text-xs text-slate-800 font-medium break-all leading-snug">
                             {doc.latest_version.file_name}
                           </p>
                         </div>
-                        <div>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
-                            Size
-                          </p>
-                          <p className="text-xs text-foreground">
-                            {formatBytes(doc.latest_version.file_size)}
-                          </p>
+
+                        {/* Size and Uploaded row */}
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                              Size
+                            </p>
+                            <p className="text-xs text-slate-800 font-semibold whitespace-nowrap">
+                              {formatBytes(doc.latest_version.file_size)}
+                            </p>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                              Uploaded
+                            </p>
+                            <p className="text-xs text-slate-800 font-medium whitespace-nowrap">
+                              {formatDate(doc.updated_at)}
+                            </p>
+                          </div>
                         </div>
+
+                        {/* Type */}
                         <div>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
-                            Uploaded
-                          </p>
-                          <p className="text-xs text-foreground">
-                            {formatDate(doc.updated_at)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
                             Type
                           </p>
-                          <p className="text-[10px] text-foreground break-all">
+                          <p className="text-[11px] text-slate-600 font-mono break-all">
                             {doc.latest_version.mime_type}
                           </p>
                         </div>
@@ -1247,13 +1449,13 @@ const DocumentViewerPage = () => {
                 <Collapsible defaultOpen={false}>
                   <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2.5 hover:bg-muted/40 transition-colors">
                     <ChevronRight className="size-3 transition-transform [[data-state=open]_&]:rotate-90" />
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">
                       Entities
                     </span>
                     {doc?.extraction?.key_fields?.entities &&
                     Array.isArray(doc.extraction.key_fields.entities) &&
                     doc.extraction.key_fields.entities.length > 0 ? (
-                      <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+                      <span className="ml-auto rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-900 border border-slate-300">
                         {doc.extraction.key_fields.entities.length}
                       </span>
                     ) : null}
@@ -1264,11 +1466,150 @@ const DocumentViewerPage = () => {
                       renderEntitiesGrouped(doc.extraction.key_fields.entities)
                     ) : (
                       <div className="px-4 pb-4">
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-slate-500">
                           No entities found.
                         </p>
                       </div>
                     )}
+                  </CollapsibleContent>
+                </Collapsible>
+
+                <div className="border-t border-border" />
+                <Collapsible defaultOpen={false}>
+                  <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2.5 hover:bg-muted/40 transition-colors">
+                    <ChevronRight className="size-3 transition-transform [[data-state=open]_&]:rotate-90" />
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">
+                      Version History
+                    </span>
+                    {versions.length > 0 && (
+                      <span className="ml-auto rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-900 border border-slate-300">
+                        {versions.length}
+                      </span>
+                    )}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    {versionsLoading && (
+                      <div className="px-4 pb-3 flex items-center gap-2 text-xs text-muted-foreground">
+                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+                        Loading...
+                      </div>
+                    )}
+                    {!versionsLoading && versions.length === 0 && (
+                      <div className="px-4 pb-3 text-xs text-muted-foreground">No versions.</div>
+                    )}
+                    {versions.map((v) => {
+                      const isCurrent = v.id === versionsCurrentId;
+                      const isPreviewing = previewingVersion?.id === v.id;
+                      return (
+                        <div
+                          key={v.id}
+                          className={`px-4 py-2.5 border-b border-border/50 cursor-pointer transition-colors ${
+                            isCurrent
+                              ? "bg-emerald-50/50 border-emerald-100"
+                              : isPreviewing
+                              ? "bg-primary/10"
+                              : "hover:bg-muted/40"
+                          }`}
+                          onClick={() => {
+                            if (isCurrent) {
+                              setPreviewingVersion(null);
+                            } else {
+                              setPreviewingVersion(v);
+                            }
+                          }}
+                        >
+                          {/* Row 1: badge + filename + actions */}
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-mono font-semibold ${
+                                isCurrent
+                                  ? "bg-primary/15 text-primary"
+                                  : "bg-slate-200 text-slate-800 border border-slate-300"
+                              }`}
+                            >
+                              v{v.version_number}
+                            </span>
+                            <span className="flex-1 min-w-0 text-xs text-foreground truncate">{v.file_name}</span>
+                            {isCurrent && (
+                              <span className="shrink-0 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-semibold border border-emerald-200">
+                                Current
+                              </span>
+                            )}
+                            {/* Restore — always reserve space, show green only when applicable */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className={`size-6 shrink-0 ${
+                                    user?.role === "Admin" && !isCurrent
+                                      ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                                      : "invisible pointer-events-none"
+                                  }`}
+                                  disabled={isRestoringVersion}
+                                  onClick={() => restoreVersion(v.id)}
+                                >
+                                  <RotateCcw className="size-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              {user?.role === "Admin" && !isCurrent && (
+                                <TooltipContent>Restore this version</TooltipContent>
+                              )}
+                            </Tooltip>
+
+                            {/* Download */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-6 shrink-0"
+                                  onClick={() =>
+                                    window.open(
+                                      `http://localhost:8000/documents/${id}/versions/${v.id}/download`,
+                                      "_blank"
+                                    )
+                                  }
+                                >
+                                  <Download className="size-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Download v{v.version_number}</TooltipContent>
+                            </Tooltip>
+                          </div>
+                          {/* Row 2: meta */}
+                          <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                            {v.uploaded_by_name && (
+                              <span className="font-medium text-slate-700 truncate max-w-[120px]">
+                                {v.uploaded_by_name}
+                              </span>
+                            )}
+                            {v.uploaded_by_name && v.created_at && (
+                              <span className="text-slate-400 shrink-0" aria-hidden="true">/</span>
+                            )}
+                            {v.created_at && (
+                              <span className="whitespace-nowrap truncate max-w-[100px]">
+                                {formatDate(v.created_at)}
+                              </span>
+                            )}
+                            {v.created_at && v.file_size && (
+                              <span className="text-slate-400 shrink-0" aria-hidden="true">/</span>
+                            )}
+                            {v.file_size && (
+                              <span className="whitespace-nowrap">
+                                {formatBytes(v.file_size)}
+                              </span>
+                            )}
+                          </div>
+                          {/* Row 3: change note */}
+                          {v.change_note && (
+                            <div className="mt-1.5 pt-1.5 border-t border-slate-100">
+                              <p className="text-[11px] italic text-slate-600">{v.change_note}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </CollapsibleContent>
                 </Collapsible>
               </div>
@@ -1402,6 +1743,58 @@ const DocumentViewerPage = () => {
           )}
         </div>
 
+        {/* Upload new version dialog */}
+        <Dialog open={uploadVersionOpen} onOpenChange={(o: boolean) => { if (!o) { setUploadVersionOpen(false); setVerFile(null); setVerNote(""); setVerProgress(0); setVerError(null); } }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-sm font-semibold">Upload new version</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col gap-4">
+              {/* Drop zone */}
+              {!verFile && (
+                <button
+                  type="button"
+                  onClick={() => verInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) setVerFile(f); }}
+                  className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border px-6 py-10 text-center hover:border-muted-foreground/40 hover:bg-accent/50 transition-colors"
+                >
+                  <Upload className="size-6 text-muted-foreground" />
+                  <p className="text-sm font-medium">Drop a file or click to browse</p>
+                  <input ref={verInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) setVerFile(f); }} />
+                </button>
+              )}
+              {verFile && (
+                <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{verFile.name}</p>
+                    <p className="text-xs text-muted-foreground">{formatBytes(verFile.size)}</p>
+                  </div>
+                  <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={() => setVerFile(null)}>
+                    <X className="size-3" />
+                  </Button>
+                </div>
+              )}
+              {/* Change note */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-muted-foreground">What changed? (optional)</label>
+                <Textarea value={verNote} onChange={(e) => setVerNote(e.target.value)} placeholder="Describe the changes in this version…" className="text-sm resize-none h-20" />
+              </div>
+              {/* Progress */}
+              {verProgress > 0 && verProgress < 100 && <Progress value={verProgress} />}
+              {/* Error */}
+              {verError && <p className="text-sm text-destructive">{verError}</p>}
+              {/* Actions */}
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setUploadVersionOpen(false)} disabled={verProgress > 0 && verProgress < 100}>Cancel</Button>
+                {verFile && (
+                  <Button onClick={uploadVersion} disabled={verProgress > 0 && verProgress < 100}>Upload</Button>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {state.type === "pdf" && state.pages > 1 && (
           <div className="flex h-9 shrink-0 items-center justify-center border-t border-border bg-background">
             <span className="text-xs text-muted-foreground">
@@ -1410,6 +1803,28 @@ const DocumentViewerPage = () => {
           </div>
         )}
       </div>
+
+      <AlertDialog open={confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Move to trash?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong className="text-foreground">{doc?.title}</strong> will be moved to trash. Admins can restore it later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {isDeleting ? "Moving…" : "Move to trash"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </TooltipProvider>
   );
 };

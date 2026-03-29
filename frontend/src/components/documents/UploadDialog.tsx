@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Upload, Folder } from "lucide-react";
 import {
   Dialog,
@@ -10,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
-import { api } from "@/lib/api";
 import FolderPickerModal from "@/components/folders/FolderPickerModal";
 import type { Document } from "@/types/document";
 
@@ -21,15 +21,19 @@ interface Props {
   onClose: () => void;
   onUploaded: (doc: Document) => void;
   defaultFolderId?: string | null;
+  defaultFolderLabel?: string | null;
 }
 
 type UploadState =
   | { stage: "idle" }
   | { stage: "selected"; file: File }
   | { stage: "uploading"; file: File; progress: number }
-  | { stage: "error"; file: File; message: string };
+  | { stage: "error"; file: File; message: string }
+  | { stage: "exact_duplicate"; file: File; existingId: string; message: string }
+  | { stage: "filename_exists"; file: File; existingId: string };
 
-const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId }: Props) => {
+const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId, defaultFolderLabel }: Props) => {
+  const navigate = useNavigate();
   const [state, setState] = useState<UploadState>({ stage: "idle" });
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(defaultFolderId ?? null);
@@ -39,8 +43,8 @@ const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId }: Props) => 
 
   useEffect(() => {
     setSelectedFolder(defaultFolderId ?? null);
-    setSelectedFolderLabel(null);
-  }, [open, defaultFolderId]);
+    setSelectedFolderLabel(defaultFolderLabel ?? null);
+  }, [open, defaultFolderId, defaultFolderLabel]);
 
   const selectFile = (file: File) => {
     setState({ stage: "selected", file });
@@ -83,6 +87,20 @@ const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId }: Props) => 
           } catch {
             setState({ stage: "error", file, message: "Upload succeeded but the server returned an unexpected response." });
           }
+        } else if (xhr.status === 409) {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            const detail = err.detail;
+            if (detail?.code === "exact_duplicate") {
+              setState({ stage: "exact_duplicate", file, existingId: detail.existing_document_id, message: detail.message });
+              return resolve();
+            }
+            if (detail?.code === "filename_exists") {
+              setState({ stage: "filename_exists", file, existingId: detail.existing_document_id });
+              return resolve();
+            }
+          } catch { /* fall through to generic error */ }
+          setState({ stage: "error", file, message: "Upload failed. Please try again." });
         } else {
           let message = "Upload failed. Please try again.";
           try {
@@ -125,6 +143,52 @@ const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId }: Props) => 
     setState({ stage: "idle" });
     setIsDragging(false);
     onClose();
+  };
+
+  const uploadAsNewVersion = (existingId: string, file: File) => {
+    setState({ stage: "uploading", file, progress: 0 });
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        setState({ stage: "uploading", file, progress: Math.round((e.loaded / e.total) * 100) });
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 201) {
+        try {
+          const doc: Document = JSON.parse(xhr.responseText);
+          onUploaded(doc);
+          handleClose();
+        } catch {
+          setState({ stage: "error", file, message: "Upload succeeded but the server returned an unexpected response." });
+        }
+      } else if (xhr.status === 409) {
+        setState({ stage: "error", file, message: "This file is identical to the existing document." });
+      } else {
+        let message = "Upload failed. Please try again.";
+        try {
+          const err = JSON.parse(xhr.responseText);
+          if (xhr.status < 500 && typeof err.detail === "string") {
+            message = err.detail;
+          }
+        } catch { /* ignore */ }
+        setState({ stage: "error", file, message });
+      }
+    };
+
+    xhr.onerror = () => {
+      setState({ stage: "error", file, message: "Unable to reach the server. Check your connection and try again." });
+    };
+
+    xhr.withCredentials = true;
+    xhr.timeout = 10 * 60 * 1000;
+    xhr.open("POST", `${BASE_URL}/documents/${existingId}/versions`);
+    xhr.send(formData);
   };
 
   return (
@@ -195,6 +259,45 @@ const UploadDialog = ({ open, onClose, onUploaded, defaultFolderId }: Props) => 
                 }}
               />
             </button>
+          )}
+
+          {/* Exact duplicate state */}
+          {state.stage === "exact_duplicate" && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">Duplicate file</p>
+              <p className="mt-1 text-xs text-amber-700">{state.message}</p>
+              <Button
+                variant="link"
+                size="sm"
+                className="mt-2 px-0 h-auto text-xs text-amber-900"
+                onClick={() => { handleClose(); navigate(`/documents/${state.existingId}`); }}
+              >
+                View existing document →
+              </Button>
+            </div>
+          )}
+
+          {/* Filename exists state */}
+          {state.stage === "filename_exists" && (
+            <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm">
+              <p className="font-medium text-foreground">File name already exists here</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                A document with this name already exists in this location. Upload it as a new version instead?
+              </p>
+              <Button
+                variant="link"
+                size="sm"
+                className="mt-2 mb-1 px-0 h-auto text-xs text-primary underline italic"
+                onClick={() => { handleClose(); navigate(`/documents/${state.existingId}`); }}
+              >
+                View existing document →
+              </Button>
+              <div className="mt-2">
+                <Button size="sm" onClick={() => uploadAsNewVersion(state.existingId, state.file)}>
+                  Upload as new version
+                </Button>
+              </div>
+            </div>
           )}
 
           {/* File selected — confirm before uploading */}

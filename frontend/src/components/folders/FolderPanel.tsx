@@ -250,10 +250,10 @@ const FolderPanel = ({ selectedFolderId, hideHeader = false }: FolderPanelProps)
 
             {/* Count chip */}
             {!isRenaming && folder.document_count > 0 && (
-              <span className={`shrink-0 rounded-full text-[9px] font-medium tabular-nums leading-none px-1.5 py-0.5 min-w-[18px] text-center mr-0.5 ${
+              <span className={`shrink-0 rounded-full text-[9px] font-semibold tabular-nums leading-none px-1.5 py-0.5 min-w-[18px] text-center mr-0.5 ${
                 isSelected
-                  ? "bg-accent-foreground/15 text-accent-foreground"
-                  : "bg-muted text-muted-foreground"
+                  ? "bg-white/30 text-white"
+                  : "bg-slate-200 text-slate-800 border border-slate-300"
               }`}>
                 {folder.document_count}
               </span>
