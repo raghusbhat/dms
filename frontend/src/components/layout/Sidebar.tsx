@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import { ChevronLeft, ChevronRight, LogOut, FolderOpen, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, FolderOpen, Trash2, ClipboardList } from "lucide-react";
 import FolderPanel from "@/components/folders/FolderPanel";
 import {
   DropdownMenu,
@@ -126,30 +126,56 @@ const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
               <SidebarNavItem key={item.path} {...item} collapsed={collapsed} />
             ))}
             {!collapsed && (
-              <button
-                onClick={() => navigate("/trash")}
-                className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors ${
-                  location.pathname === "/trash"
-                    ? "bg-accent font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                }`}
-              >
-                <Trash2 className="size-4 shrink-0" />
-                Trash
-              </button>
+              <>
+                <button
+                  onClick={() => navigate("/trash")}
+                  className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors ${
+                    location.pathname === "/trash"
+                      ? "bg-accent font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  <Trash2 className="size-4 shrink-0" />
+                  Trash
+                </button>
+                <button
+                  onClick={() => navigate("/audit")}
+                  className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors ${
+                    location.pathname === "/audit"
+                      ? "bg-accent font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  <ClipboardList className="size-4 shrink-0" />
+                  Audit Log
+                </button>
+              </>
             )}
             {collapsed && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => navigate("/trash")}
-                    className="flex items-center justify-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                  >
-                    <Trash2 className="size-4 shrink-0" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">Trash</TooltipContent>
-              </Tooltip>
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => navigate("/trash")}
+                      className="flex items-center justify-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                    >
+                      <Trash2 className="size-4 shrink-0" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Trash</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => navigate("/audit")}
+                      className="flex items-center justify-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                    >
+                      <ClipboardList className="size-4 shrink-0" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Audit Log</TooltipContent>
+                </Tooltip>
+              </>
             )}
           </div>
         </>

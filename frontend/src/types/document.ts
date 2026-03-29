@@ -74,3 +74,23 @@ export interface TrashItem {
   deleted_by_name: string | null;
   latest_version: DocumentVersion | null;
 }
+
+export interface AuditLogItem {
+  id: string;
+  timestamp: string;
+  user_id: string | null;
+  user_name: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  document_title: string | null;
+  ip_address: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AuditLogPageResponse {
+  items: AuditLogItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
