@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing import Literal
 from pydantic import BaseModel
@@ -124,6 +124,7 @@ class DocumentMoveRequest(BaseModel):
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile,
+    request: Request,
     folder_id: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -233,7 +234,8 @@ async def upload_document(
         action="upload",
         resource_type="document",
         resource_id=doc.id,
-        metadata_={"file_name": file.filename, "version_number": 1},
+        ip_address=request.client.host if request.client else None,
+        metadata_={"title": doc.title, "file_name": file.filename, "version_number": 1},
     ))
 
     await db.commit()
@@ -401,12 +403,22 @@ async def list_trash(
 @router.get("/{document_id}", response_model=DocumentOut)
 async def get_document(
     document_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DocumentOut:
     doc = await _get_doc_or_404(db, document_id)
     version = await _get_current_version(db, doc)
     extraction = await _get_extraction(db, doc)
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="view",
+        resource_type="document",
+        resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
+        metadata_={"title": doc.title},
+    ))
+    await db.commit()
     return _doc_out(doc, version, extraction)
 
 
@@ -457,6 +469,7 @@ async def preview_document(
 @router.get("/{document_id}/download")
 async def download_document(
     document_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -465,6 +478,16 @@ async def download_document(
 
     if not version:
         raise HTTPException(status_code=404, detail="No file attached to this document.")
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="download",
+        resource_type="document",
+        resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
+        metadata_={"title": doc.title, "file_name": version.file_name, "version_number": version.version_number},
+    ))
+    await db.commit()
 
     return StreamingResponse(
         storage.stream(version.storage_path),
@@ -507,6 +530,7 @@ async def move_document(
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -521,6 +545,7 @@ async def delete_document(
         action="soft_delete",
         resource_type="document",
         resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
         metadata_={"title": doc.title},
     ))
     await db.commit()
@@ -535,6 +560,7 @@ async def delete_document(
 @router.patch("/trash/{document_id}/restore", response_model=DocumentOut)
 async def restore_document(
     document_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DocumentOut:
@@ -555,6 +581,7 @@ async def restore_document(
         action="restore",
         resource_type="document",
         resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
         metadata_={"title": doc.title},
     ))
     await db.commit()
@@ -592,6 +619,7 @@ async def restore_document(
 @router.delete("/trash/{document_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
 async def permanent_delete(
     document_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
@@ -612,6 +640,7 @@ async def permanent_delete(
         action="permanent_delete",
         resource_type="document",
         resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
         metadata_={"title": doc.title},
     ))
 
@@ -631,6 +660,7 @@ async def permanent_delete(
 async def upload_new_version(
     document_id: str,
     file: UploadFile,
+    request: Request,
     change_note: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -697,7 +727,9 @@ async def upload_new_version(
         action="new_version",
         resource_type="document",
         resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
         metadata_={
+            "title": doc.title,
             "version_number": next_number,
             "file_name": file.filename,
             "change_note": change_note,
@@ -753,11 +785,22 @@ async def list_versions(
 async def download_version(
     document_id: str,
     version_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     doc = await _get_doc_or_404(db, document_id)
     version = await _get_version_or_404(db, doc.id, version_id)
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="download",
+        resource_type="document",
+        resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
+        metadata_={"title": doc.title, "file_name": version.file_name, "version_number": version.version_number},
+    ))
+    await db.commit()
 
     return StreamingResponse(
         storage.stream(version.storage_path),
@@ -804,6 +847,7 @@ async def preview_version(
 async def restore_version(
     document_id: str,
     version_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DocumentOut:
@@ -822,7 +866,9 @@ async def restore_version(
         action="restore_version",
         resource_type="document",
         resource_id=doc.id,
+        ip_address=request.client.host if request.client else None,
         metadata_={
+            "title": doc.title,
             "restored_version_id": str(version.id),
             "restored_version_number": version.version_number,
             "previous_version_id": str(prev_version_id) if prev_version_id else None,
@@ -931,18 +977,22 @@ def _doc_out(
 async def patch_metadata(
     document_id: str,
     body: MetadataPatchRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentOut:
     doc = await _get_doc_or_404(db, document_id)
-    
+
     user_role = current_user.role.name if current_user.role else None
     if user_role == "uploader":
         raise HTTPException(status_code=403, detail="Uploaders cannot edit metadata")
-    
+
+    changes: dict = {}
+
     if body.tags is not None:
+        changes["tags"] = {"old": list(doc.tags), "new": body.tags}
         doc.tags = body.tags
-    
+
     if body.document_type is not None or body.sensitivity is not None:
         result = await db.execute(
             select(DocumentExtraction).where(DocumentExtraction.document_id == doc.id)
@@ -954,13 +1004,25 @@ async def patch_metadata(
                 detail="Document has no AI extraction yet — cannot edit document_type or sensitivity.",
             )
         if body.document_type is not None:
+            changes["document_type"] = {"old": extraction.document_type, "new": body.document_type}
             extraction.document_type = body.document_type
         if body.sensitivity is not None:
+            changes["sensitivity"] = {"old": extraction.sensitivity, "new": body.sensitivity}
             extraction.sensitivity = body.sensitivity
-    
+
+    if changes:
+        db.add(AuditLog(
+            user_id=current_user.id,
+            action="metadata_change",
+            resource_type="document",
+            resource_id=doc.id,
+            ip_address=request.client.host if request.client else None,
+            metadata_={"title": doc.title, "changes": changes},
+        ))
+
     await db.commit()
     await db.refresh(doc)
-    
+
     version = await _get_current_version(db, doc)
     extraction = await _get_extraction(db, doc)
     return _doc_out(doc, version, extraction)
